@@ -28,9 +28,43 @@ const handleSearch = () => {
       <div class="content-body">
         <div class="card">
           <h3 class="card-title">原始逻辑</h3>
-          <ul class="point-list">
-            <li v-for="point in slide.raw_points" :key="point">{{ point }}</li>
-          </ul>
+          <div class="point-container">
+            <template v-for="(point, idx) in slide.raw_points" :key="idx">
+              <!-- 文本段落 -->
+              <div 
+                v-if="point.type === 'text'" 
+                class="point-item"
+                :class="`level-${point.level || 0}`"
+              >
+                <div class="point-marker">
+                   <span v-if="(point.level || 0) === 0">•</span>
+                   <span v-else-if="(point.level || 0) === 1">◦</span>
+                   <span v-else>-</span>
+                </div>
+                <div class="point-content">{{ point.text }}</div>
+              </div>
+              
+              <!-- 表格 -->
+              <div v-else-if="point.type === 'table'" class="point-table-wrapper">
+                 <table class="simple-table">
+                   <tbody>
+                     <tr v-for="(row, rIdx) in point.data" :key="rIdx">
+                       <td v-for="(cell, cIdx) in row" :key="cIdx">{{ cell }}</td>
+                     </tr>
+                   </tbody>
+                 </table>
+              </div>
+            </template>
+          </div>
+          <!-- 图片信息展示区域 -->
+          <div v-if="slide.images && slide.images.length > 0" class="image-info-section">
+            <div class="info-label">🖼️ 幻灯片图像信息:</div>
+            <ul class="image-list">
+              <li v-for="(imgInfo, index) in slide.images" :key="index" class="image-item">
+                {{ imgInfo }}
+              </li>
+            </ul>
+          </div>
         </div>
 
         <div class="card ai-card">
@@ -167,6 +201,36 @@ const handleSearch = () => {
   padding-left: 1.2rem;
   color: #475569;
   line-height: 1.8;
+}
+
+.image-info-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.info-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 0.5rem;
+}
+
+.image-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.image-item {
+  font-size: 0.85rem;
+  color: #059669;
+  background: #ecfdf5;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  display: inline-block;
+  margin-right: 6px;
 }
 
 .markdown-body {
@@ -398,5 +462,49 @@ const handleSearch = () => {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* New Semantic Styles */
+.point-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.point-item {
+  display: flex;
+  gap: 0.5rem;
+  line-height: 1.6;
+  color: #334155;
+}
+.point-marker {
+  color: #64748b;
+  font-weight: bold;
+  min-width: 15px;
+  text-align: center;
+}
+.level-0 { margin-left: 0; font-weight: 500; }
+.level-1 { margin-left: 1.5rem; font-size: 0.95em; color: #475569; }
+.level-2 { margin-left: 3rem; font-size: 0.9em; color: #64748b; }
+.level-3 { margin-left: 4.5rem; }
+
+.point-table-wrapper {
+  margin: 1rem 0;
+  overflow-x: auto;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+.simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.simple-table td {
+  border: 1px solid #e2e8f0;
+  padding: 8px 12px;
+}
+.simple-table tr:first-child td {
+  background-color: #f1f5f9;
+  font-weight: 600;
+  color: #1e293b;
 }
 </style>

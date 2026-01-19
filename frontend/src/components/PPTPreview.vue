@@ -29,7 +29,20 @@ const selectNext = () => {
       <button class="nav-btn prev" @click="selectPrev">‹</button>
       <div class="slide-number-badge">Slide {{ (currentIndex || 0) + 1 }} / {{ slides.length }}</div>
       <div class="slide-image-wrapper">
-        <img :src="slides[currentIndex]?.image" alt="Slide Preview" class="slide-image" />
+        <template v-if="slides[currentIndex]?.image">
+          <img :src="slides[currentIndex]?.image" alt="Slide Preview" class="slide-image" />
+        </template>
+        <template v-else>
+          <div class="slide-placeholder">
+            <span class="placeholder-icon">📄</span>
+            <span class="placeholder-text">{{ slides[currentIndex]?.title || '无标题幻灯片' }}</span>
+            <ul class="placeholder-points">
+              <li v-for="(point, idx) in (slides[currentIndex]?.raw_points || []).slice(0, 3)" :key="idx">
+                {{ point }}
+              </li>
+            </ul>
+          </div>
+        </template>
       </div>
       <div class="slide-caption">
         {{ slides[currentIndex]?.title }}
@@ -44,7 +57,14 @@ const selectNext = () => {
         :class="['thumb-item', { active: index === currentIndex }]"
         @click="$emit('select', index)"
       >
-        <img :src="slide.image" class="thumb-img" />
+        <template v-if="slide.image">
+          <img :src="slide.image" class="thumb-img" />
+        </template>
+        <template v-else>
+          <div class="thumb-placeholder">
+            <span class="mini-icon">📄</span>
+          </div>
+        </template>
         <span class="thumb-num">{{ slide.page_num }}</span>
       </div>
     </div>
@@ -174,6 +194,71 @@ const selectNext = () => {
 .thumb-item.active {
   border-color: #3b82f6;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+
+.slide-placeholder {
+  width: 100%;
+  aspect-ratio: 16/9;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  box-sizing: border-box;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.placeholder-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.placeholder-text {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  text-align: center;
+  max-width: 80%;
+}
+
+.placeholder-points {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.9rem;
+  text-align: left;
+  opacity: 0.8;
+  width: 80%;
+}
+
+.placeholder-points li {
+  margin-bottom: 0.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.placeholder-points li::before {
+  content: "•";
+  margin-right: 0.5rem;
+  color: #3b82f6;
+}
+
+.thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mini-icon {
+  font-size: 1.5rem;
+  opacity: 0.3;
 }
 
 .thumb-img {

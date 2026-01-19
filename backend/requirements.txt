@@ -1,0 +1,7 @@
+pydantic
+fastapi
+uvicorn
+requests
+PyMuPDF
+python-pptx
+python-multipart
