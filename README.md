@@ -18,11 +18,11 @@ frontend/
 │   │    ├── index.js
 │   │    └── 123
 │   ├── components/
-│   │    ├── ContentView.vue         // 顶部导航与状态
-│   │    ├── LoadingState.vue     // 文件上传与拖拽
+│   │    ├── ContentView.vue     // 内容展示，目前是预设
+│   │    ├── LoadingState.vue     
 │   │    ├── Navbar.vue         // 顶部导航与状态
 │   │    ├── PPTPreview.vue     // 左侧PPT
-│   │    ├── SlideCard.vue      // 核心：单页 PPT 内容对比卡片
+│   │    ├── SlideCard.vue      // 单页 PPT 内容对比卡片
 │   │    ├── ToolSidebar.vue    // 功能工具栏
 │   │    ├── UploadZone.vue     // 上传区域
 │   │    └── Wordspace.vue      // 核心工作区，PPT预览和扩展内容
