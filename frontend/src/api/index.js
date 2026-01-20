@@ -14,7 +14,12 @@ export const pptApi = {
             headers: { 'Content-Type': 'multipart/form-data' }
         })
     },
-    
+    mindmap(payload) {
+        return service.post('/mindmap', payload)
+    },
+    mindmapFromSlides(payload) {
+        return service.post('/mindmap/from-slides', payload)
+    },
     searchKnowledge(query) {
         return service.get('/search', { params: { q: query } })
     },

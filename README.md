@@ -18,8 +18,10 @@ frontend/
 │   │    ├── index.js
 │   │    └── 123
 │   ├── components/
-│   │    ├── ContentView.vue     // 内容展示，目前是预设
+│   │    ├── ContentView.vue    // 内容展示，目前是预设
 │   │    ├── LoadingState.vue     
+│   │    ├── MindmapGraph.vue   // 思维导图图像显示逻辑
+│   │    ├── MindmapTree.vue    // 思维导图树结构
 │   │    ├── Navbar.vue         // 顶部导航与状态
 │   │    ├── PPTPreview.vue     // 左侧PPT
 │   │    ├── SlideCard.vue      // 单页 PPT 内容对比卡片

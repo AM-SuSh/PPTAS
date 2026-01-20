@@ -8,9 +8,13 @@ import sys
 import os
 from unittest.mock import MagicMock
 
-# 添加项目路径 - 同时添加 src 目录，这样绝对导入才能工作
+# 添加项目路径 - 修改为运行时导入，避免相对导入问题
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(current_dir, 'src'))
+backend_src = os.path.join(current_dir, 'src')
+
+# 需要将 backend/src 作为包来运行，所以改为从父目录导入
+sys.path.insert(0, current_dir)
+sys.path.insert(0, backend_src)
 
 
 # 创建 Mock LLM Config
@@ -33,21 +37,22 @@ def test_imports():
     print("=" * 60)
     
     try:
-        from services.page_analysis_service import PageDeepAnalysisService, DeepAnalysisResult
+        # 改为从 src 包中导入
+        from src.services.page_analysis_service import PageDeepAnalysisService, DeepAnalysisResult
         print("✅ PageDeepAnalysisService 导入成功")
     except Exception as e:
         print(f"❌ PageDeepAnalysisService 导入失败: {e}")
         return False
     
     try:
-        from services.ai_tutor_service import AITutorService, ChatMessage
+        from src.services.ai_tutor_service import AITutorService, ChatMessage
         print("✅ AITutorService 导入成功")
     except Exception as e:
         print(f"❌ AITutorService 导入失败: {e}")
         return False
     
     try:
-        from services.reference_search_service import ReferenceSearchService, ReferenceItem, ReferenceSearchResult
+        from src.services.reference_search_service import ReferenceSearchService, ReferenceItem, ReferenceSearchResult
         print("✅ ReferenceSearchService 导入成功")
     except Exception as e:
         print(f"❌ ReferenceSearchService 导入失败: {e}")
@@ -66,7 +71,7 @@ def test_service_instantiation():
     mock_config = MockLLMConfig()
     
     try:
-        from services.ai_tutor_service import AITutorService
+        from src.services.ai_tutor_service import AITutorService
         tutor = AITutorService(llm_config=mock_config)
         print("✅ AITutorService 实例化成功")
     except Exception as e:
@@ -74,7 +79,7 @@ def test_service_instantiation():
         return False
     
     try:
-        from services.reference_search_service import ReferenceSearchService
+        from src.services.reference_search_service import ReferenceSearchService
         search = ReferenceSearchService()
         print("✅ ReferenceSearchService 实例化成功")
     except Exception as e:
@@ -91,7 +96,7 @@ def test_pydantic_models():
     print("=" * 60)
     
     try:
-        from services.page_analysis_service import DeepAnalysisResult
+        from src.services.page_analysis_service import DeepAnalysisResult
         result = DeepAnalysisResult(
             page_id=1,
             title="测试页面",
@@ -112,7 +117,7 @@ def test_pydantic_models():
         return False
     
     try:
-        from services.reference_search_service import ReferenceItem, ReferenceSearchResult
+        from src.services.reference_search_service import ReferenceItem, ReferenceSearchResult
         item = ReferenceItem(
             title="参考文献",
             url="http://example.com",
@@ -181,7 +186,7 @@ def test_service_methods():
     mock_config = MockLLMConfig()
     
     try:
-        from services.ai_tutor_service import AITutorService
+        from src.services.ai_tutor_service import AITutorService
         tutor = AITutorService(llm_config=mock_config)
         
         # 测试设置页面上下文
@@ -202,7 +207,7 @@ def test_service_methods():
         return False
     
     try:
-        from services.reference_search_service import ReferenceSearchService
+        from src.services.reference_search_service import ReferenceSearchService
         search = ReferenceSearchService()
         
         # 验证方法是否存在
@@ -223,7 +228,7 @@ def test_services_export():
     print("=" * 60)
     
     try:
-        from services import PageDeepAnalysisService, AITutorService, ReferenceSearchService
+        from src.services import PageDeepAnalysisService, AITutorService, ReferenceSearchService
         print("✅ 所有服务从 services 模块正确导出")
         return True
     except Exception as e:
