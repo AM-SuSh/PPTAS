@@ -59,7 +59,7 @@ class ReferenceSearchRequest(BaseModel):
 # ==================== 配置加载 ====================
 def load_config():
     """加载配置文件"""
-    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "ppt-expansion-system", "config.json")
+    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config.json")
     
     if not os.path.exists(config_path):
         config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
@@ -71,9 +71,9 @@ def load_config():
     # 默认配置
     return {
         "llm": {
-            "api_key": os.getenv("OPENAI_API_KEY", ""),
-            "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            "model": os.getenv("OPENAI_MODEL", "gpt-4")
+            "api_key": os.getenv("api_key", ""),
+            "base_url": os.getenv("base_url", "https://api.openai.com/v1"),
+            "model": os.getenv("model", "gpt-4")
         },
         "retrieval": {
             "preferred_sources": ["arxiv", "wikipedia"],
@@ -387,6 +387,78 @@ async def search_by_concepts(
 async def health_check():
     """健康检查"""
     return {"status": "ok", "version": "0.2.0"}
+
+
+@app.get("/api/v1/health/llm")
+async def check_llm_connection():
+    """检查 LLM 连接状态 - 快速诊断"""
+    config = load_config()
+    llm_config = LLMConfig(
+        api_key=config["llm"]["api_key"],
+        base_url=config["llm"]["base_url"],
+        model=config["llm"]["model"]
+    )
+    
+    # 检查 API Key 配置
+    if not llm_config.api_key:
+        return {
+            "status": "error",
+            "message": "API Key 未配置",
+            "detail": "请检查 config.json 中的 llm.api_key 字段",
+            "configured": False,
+            "model": llm_config.model
+        }
+    
+    try:
+        # 创建 LLM 实例进行连接测试
+        llm = llm_config.create_llm(temperature=0.5)
+        
+        # 发送一个极其简洁的测试消息（超快速）
+        test_message = "Say OK"
+        response = llm.invoke(test_message)
+        
+        # 检查是否得到有效响应
+        if response and response.content:
+            return {
+                "status": "ok",
+                "message": "LLM 连接正常",
+                "model": llm_config.model,
+                "configured": True,
+                "response_preview": response.content[:50]
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "LLM 返回空结果",
+                "detail": "服务返回内容为空，可能是配置问题",
+                "model": llm_config.model,
+                "configured": True
+            }
+    except Exception as e:
+        error_msg = str(e).lower()
+        
+        # 根据错误类型提供更具体的诊断
+        if "401" in error_msg or "unauthorized" in error_msg or "invalid" in error_msg:
+            detail = "API Key 无效或已过期 - 请检查 config.json"
+        elif "429" in error_msg or "rate_limit" in error_msg or "rate limit" in error_msg:
+            detail = "超过 API 调用速率限制，请稍后再试"
+        elif "quota" in error_msg or "exceeded" in error_msg:
+            detail = "API 配额已用尽 - 请检查账户余额"
+        elif "timeout" in error_msg or "timed out" in error_msg:
+            detail = "请求超时 - 检查网络连接或 LLM 服务状态"
+        elif "connection" in error_msg or "refused" in error_msg:
+            detail = "无法连接到 LLM 服务 - 检查 base_url 配置"
+        else:
+            detail = str(e)
+        
+        return {
+            "status": "error",
+            "message": "LLM 连接失败",
+            "detail": detail,
+            "model": llm_config.model,
+            "configured": True,
+            "error_type": type(e).__name__
+        }
 
 
 if __name__ == "__main__":

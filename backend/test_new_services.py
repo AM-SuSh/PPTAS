@@ -6,9 +6,25 @@
 
 import sys
 import os
+from unittest.mock import MagicMock
 
-# 添加项目路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# 添加项目路径 - 同时添加 src 目录，这样绝对导入才能工作
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(current_dir, 'src'))
+
+
+# 创建 Mock LLM Config
+class MockLLMConfig:
+    """Mock LLM 配置用于测试"""
+    def __init__(self):
+        self.api_key = "mock-key"
+        self.base_url = "https://api.mock.com"
+        self.model = "mock-model"
+    
+    def create_llm(self, temperature=0.5):
+        """创建 mock LLM"""
+        return MagicMock()
+
 
 def test_imports():
     """测试所有导入"""
@@ -46,9 +62,12 @@ def test_service_instantiation():
     print("🏗️  测试服务实例化...")
     print("=" * 60)
     
+    # 创建 mock llm_config
+    mock_config = MockLLMConfig()
+    
     try:
         from services.ai_tutor_service import AITutorService
-        tutor = AITutorService()
+        tutor = AITutorService(llm_config=mock_config)
         print("✅ AITutorService 实例化成功")
     except Exception as e:
         print(f"❌ AITutorService 实例化失败: {e}")
@@ -158,16 +177,20 @@ def test_service_methods():
     print("⚡ 测试服务核心方法...")
     print("=" * 60)
     
+    # 创建 mock llm_config
+    mock_config = MockLLMConfig()
+    
     try:
         from services.ai_tutor_service import AITutorService
-        tutor = AITutorService()
+        tutor = AITutorService(llm_config=mock_config)
         
         # 测试设置页面上下文
         tutor.set_page_context(
             page_id=1,
             title="测试标题",
             content="测试内容",
-            concepts=["概念1", "概念2"]
+            key_concepts=["概念1", "概念2"],
+            analysis="这是测试分析内容"
         )
         print("✅ AITutorService.set_page_context() 工作正常")
         
@@ -208,13 +231,8 @@ def test_services_export():
         return False
 
 
-def main():
+def run_all_tests():
     """运行所有测试"""
-    print("\n")
-    print("🧪 " + "=" * 56)
-    print("     后端新服务完整性验证测试")
-    print("=" * 60)
-    
     tests = [
         ("模块导入", test_imports),
         ("服务实例化", test_service_instantiation),
@@ -251,11 +269,22 @@ def main():
     
     if passed == total:
         print("\n✨ 所有测试通过！后端新服务已准备就绪。")
-        return 0
+        return True
     else:
         print(f"\n⚠️  有 {total - passed} 个测试失败，需要修复。")
-        return 1
+        return False
+
+
+def main():
+    """主函数"""
+    print("\n")
+    print("🧪 " + "=" * 56)
+    print("     后端新服务完整性验证测试")
+    print("=" * 60)
+    
+    return run_all_tests()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    success = main()
+    sys.exit(0 if success else 1)

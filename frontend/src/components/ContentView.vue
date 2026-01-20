@@ -141,6 +141,70 @@ const handleSearch = () => {
     isSearching.value = false
   }, 1000)
 }
+
+// 检查后端连接
+const checkBackendConnection = async () => {
+  try {
+    const response = await pptApi.checkHealth()
+    if (response.status === 200) {
+      alert('✅ 后端连接正常！\n\n版本: ' + response.data.version + '\n状态: ' + response.data.status)
+    }
+  } catch (error) {
+    alert('❌ 后端连接失败！\n\n请确保：\n1. 后端服务已启动 (uvicorn main:app --reload)\n2. 服务地址为 http://localhost:8000\n3. 防火墙未阻止连接\n\n错误信息：' + error.message)
+  }
+}
+
+// 检查 LLM 连接
+const checkLLMConnection = async () => {
+  try {
+    const response = await pptApi.checkLLMConnection()
+    const data = response.data
+    
+    if (data.status === 'ok') {
+      alert('✅ LLM 连接正常！\n\n模型: ' + data.model + '\n示例回复: ' + data.response_preview)
+    } else {
+      let errorMsg = '❌ LLM 连接失败\n\n'
+      errorMsg += '消息: ' + data.message + '\n'
+      if (data.detail) errorMsg += '详情: ' + data.detail + '\n'
+      errorMsg += '\n解决方案：\n'
+      
+      if (!data.configured) {
+        errorMsg += '1. 检查 config.json 中的 api_key 是否正确配置\n'
+        errorMsg += '2. 确认 API Key 有效期未过期\n'
+        errorMsg += '3. 检查网络连接是否正常'
+      } else {
+        errorMsg += '1. 检查 API Key 是否有效\n'
+        errorMsg += '2. 确认 API 配额未超限\n'
+        errorMsg += '3. 检查选择的模型是否可用\n'
+        errorMsg += '4. 尝试更换模型测试'
+      }
+      
+      alert(errorMsg)
+    }
+  } catch (error) {
+    let errorMsg = '❌ LLM 检查失败\n\n'
+    
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      errorMsg += '原因: 请求超时（30秒）\n\n'
+      errorMsg += '这通常表示：\n'
+      errorMsg += '1. LLM 服务响应缓慢\n'
+      errorMsg += '2. API Key 无效导致被拒\n'
+      errorMsg += '3. 网络连接不稳定\n\n'
+      errorMsg += '建议：\n'
+      errorMsg += '• 检查 config.json 中的 API Key\n'
+      errorMsg += '• 确认 base_url 是否正确\n'
+      errorMsg += '• 检查网络连接\n'
+      errorMsg += '• 查看后端日志: echo $LAST_COMMAND (backend 终端)'
+    } else {
+      errorMsg += '原因: ' + error.message + '\n\n'
+      errorMsg += '请检查：\n'
+      errorMsg += '1. 后端服务是否运行\n'
+      errorMsg += '2. 网络连接是否正常'
+    }
+    
+    alert(errorMsg)
+  }
+}
 </script>
 
 <template>
@@ -217,9 +281,9 @@ const handleSearch = () => {
             </div>
           </div>
 
-          <!-- 深度分析内容 -->
+          <!-- 深度解析内容 -->
           <div class="analysis-section">
-            <h4 class="section-title">🤖 AI 深度分析</h4>
+            <h4 class="section-title">🤖 AI 深度解析内容</h4>
             
             <!-- 成功加载的分析内容 -->
             <div v-if="slide.deep_analysis && !slide.deep_analysis.includes('待补充') && !slide.deep_analysis.includes('❌')" class="markdown-body">
@@ -239,37 +303,72 @@ const handleSearch = () => {
             <!-- 等待分析状态 -->
             <div v-else class="pending-box">
               <div class="pending-icon">⏳</div>
-              <p><strong>等待 AI 分析...</strong></p>
-              <p class="hint-text">如果长时间未显示结果，请检查以下调试信息：</p>
+              <p><strong>等待 AI 解析...</strong></p>
+              <p class="hint-text">如果长时间未显示结果，请检查以下连接状态：</p>
+              
+              <!-- AI连接状态面板 -->
+              <div class="ai-connection-panel">
+                <div class="connection-header">🔗 AI 连接诊断</div>
+                
+                <!-- 基本信息 -->
+                <div class="connection-group">
+                  <div class="connection-item">
+                    <span class="item-label">📄 当前页面:</span>
+                    <span class="item-value">{{ slide.page_num || '未知' }} - {{ slide.title }}</span>
+                  </div>
+                  
+                  <div class="connection-item">
+                    <span class="item-label">📊 数据状态:</span>
+                    <span class="item-value" :class="!slide.deep_analysis ? 'status-empty' : slide.deep_analysis.includes('待补充') ? 'status-pending' : 'status-ok'">
+                      <span v-if="!slide.deep_analysis">❌ deep_analysis 字段为空</span>
+                      <span v-else-if="slide.deep_analysis.includes('待补充')">⏳ 标记为"待补充"</span>
+                      <span v-else>✓ 已有内容 ({{ slide.deep_analysis.length }} 字符)</span>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 后端连接状态 -->
+                <div class="connection-group">
+                  <div class="group-title">🖥️ 后端服务状态</div>
+                  <div class="connection-item">
+                    <span class="item-label">服务器地址:</span>
+                    <span class="item-value code">http://localhost:8000</span>
+                  </div>
+                  <div class="connection-item">
+                    <span class="item-label">状态检查:</span>
+                    <span class="item-value">
+                      <code class="inline-code">curl http://localhost:8000/docs</code>
+                      或浏览器访问该地址
+                    </span>
+                  </div>
+                  <div class="connection-item check-method">
+                    <button class="check-btn" @click="checkBackendConnection">🔍 检查后端连接</button>
+                  </div>
+                </div>
+
+                <!-- LLM连接状态 -->
+                <div class="connection-group">
+                  <div class="group-title">🤖 LLM 服务状态</div>
+                  <div class="connection-item">
+                    <span class="item-label">API 配置:</span>
+                    <span class="item-value">检查 .env 或 config.json 中的 API Key</span>
+                  </div>
+                  <div class="connection-item">
+                    <span class="item-label">问题排查:</span>
+                    <span class="item-value">
+                      • API Key 是否正确<br>
+                      • 是否超过 API 配额限制<br>
+                      • 网络是否能访问 LLM 服务
+                    </span>
+                  </div>
+                  <div class="connection-item check-method">
+                    <button class="check-btn llm-btn" @click="checkLLMConnection">🤖 检查 LLM 连接</button>
+                  </div>
+                </div>
+              </div>
               
               <!-- 详细调试信息 -->
               <div class="debug-info-inline">
-                <div class="debug-item">
-                  <strong>📄 当前页面:</strong> 
-                  <span>{{ slide.page_num || '未知' }} - {{ slide.title }}</span>
-                </div>
-                
-                <div class="debug-item">
-                  <strong>📊 数据状态:</strong>
-                  <span v-if="!slide.deep_analysis">❌ deep_analysis 字段为空</span>
-                  <span v-else-if="slide.deep_analysis.includes('待补充')">⏳ 标记为"待补充"</span>
-                  <span v-else>✓ 已有内容 ({{ slide.deep_analysis.length }} 字符)</span>
-                </div>
-                
-                <div class="debug-item">
-                  <strong>🔍 后端连接:</strong>
-                  <span>检查 http://localhost:8000 是否运行</span>
-                </div>
-                
-                <div class="debug-item">
-                  <strong>🔑 API 配置:</strong>
-                  <span>检查 OpenAI API Key 是否正确配置</span>
-                </div>
-                
-                <div class="debug-item">
-                  <strong>📡 网络请求:</strong>
-                  <span>打开浏览器控制台 (F12) → Network 标签</span>
-                </div>
                 
                 <!-- 查看发送到 LLM 的 Prompt -->
                 <details class="prompt-details">
@@ -1307,5 +1406,130 @@ const handleSearch = () => {
   border-left: 3px solid #10b981;
   font-size: 0.85rem;
   color: #334155;
+}
+
+/* AI 连接状态面板样式 */
+.ai-connection-panel {
+  background: linear-gradient(135deg, #f0f7ff 0%, #f8fafc 100%);
+  border: 2px solid #3b82f6;
+  border-radius: 8px;
+  padding: 1.2rem;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}
+
+.connection-header {
+  font-weight: 700;
+  color: #1e293b;
+  font-size: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid #3b82f6;
+  margin-bottom: 1rem;
+}
+
+.connection-group {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: white;
+  border-radius: 6px;
+  border-left: 4px solid #0066cc;
+}
+
+.group-title {
+  font-weight: 600;
+  color: #0066cc;
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.connection-item {
+  padding: 0.5rem 0;
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.connection-item.check-method {
+  justify-content: center;
+  padding-top: 0.75rem;
+}
+
+.item-label {
+  font-weight: 600;
+  color: #1e293b;
+  min-width: 120px;
+  flex-shrink: 0;
+}
+
+.item-value {
+  color: #475569;
+  flex: 1;
+  line-height: 1.5;
+}
+
+.item-value.status-empty {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.item-value.status-pending {
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+.item-value.status-ok {
+  color: #059669;
+  font-weight: 500;
+}
+
+.item-value.code {
+  background: #f3f4f6;
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 0.85rem;
+}
+
+.item-value .inline-code {
+  background: #f3f4f6;
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 0.85rem;
+  color: #dc2626;
+}
+
+.check-btn {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+}
+
+.check-btn:hover {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
+  transform: translateY(-1px);
+}
+
+.check-btn:active {
+  transform: translateY(0);
+}
+
+.check-btn.llm-btn {
+  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+}
+
+.check-btn.llm-btn:hover {
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
 }
 </style>

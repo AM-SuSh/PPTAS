@@ -69,5 +69,17 @@ export const pptApi = {
             concepts,
             max_per_concept: maxPerConcept
         })
+    },
+
+    // 新增方法 - 检查后端健康状态
+    checkHealth() {
+        return service.get('/health')
+    },
+
+    // 新增方法 - 检查 LLM 连接（使用更短超时）
+    checkLLMConnection() {
+        return service.get('/health/llm', {
+            timeout: 10000  // LLM 检查最多等待 10 秒
+        })
     }
 }
