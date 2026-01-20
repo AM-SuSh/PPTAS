@@ -8,7 +8,8 @@ const props = defineProps({
   activeTool: String,
   mindmap: Object,
   mindmapLoading: Boolean,
-  mindmapError: String
+  mindmapError: String,
+  isAnalyzing: Boolean  // 新增：是否正在分析
 })
 
 // Chat 相关
@@ -304,14 +305,27 @@ const checkLLMConnection = async () => {
               </details>
             </div>
 
-            <!-- 等待分析状态 -->
+            <!-- 正在分析或等待分析状态 - 显示原始内容 -->
             <div v-else class="pending-box">
-              <div class="pending-icon">⏳</div>
-              <p><strong>等待 AI 解析...</strong></p>
-              <p class="hint-text">如果长时间未显示结果，请检查以下连接状态：</p>
+              <div v-if="props.isAnalyzing" class="analyzing-badge">
+                <span class="spinner-small"></span> 正在生成 AI 分析...
+              </div>
+              <div v-else class="pending-icon">⏳</div>
+              <p v-if="!props.isAnalyzing"><strong>等待 AI 解析...</strong></p>
               
-              <!-- AI连接状态面板 -->
-              <div class="ai-connection-panel">
+              <!-- 显示原始内容作为占位符 -->
+              <div v-if="slide.raw_content || slide.content" class="original-content-section">
+                <h5 class="subsection-title">📄 页面原始内容</h5>
+                <div class="original-content">
+                  {{ (slide.raw_content || slide.content || '').substring(0, 300) }}
+                  <span v-if="(slide.raw_content || slide.content || '').length > 300">...</span>
+                </div>
+              </div>
+              
+              <p v-if="!props.isAnalyzing" class="hint-text">如果长时间未显示结果，请检查以下连接状态：</p>
+              
+              <!-- AI连接状态面板 - 仅在非分析时显示 -->
+              <div v-if="!props.isAnalyzing" class="ai-connection-panel">
                 <div class="connection-header">🔗 AI 连接诊断</div>
                 
                 <!-- 基本信息 -->
@@ -1137,9 +1151,61 @@ const checkLLMConnection = async () => {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.analyzing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  color: #d97706;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.spinner-small {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid #f59e0b;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+.original-content-section {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 1rem;
+  margin: 1rem 0;
+  text-align: left;
+}
+
+.original-content-section .subsection-title {
+  font-size: 0.9rem;
+  color: #666;
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.original-content {
+  color: #555;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 .pending-box p {

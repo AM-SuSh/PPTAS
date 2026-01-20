@@ -27,6 +27,9 @@ class WikipediaMCP:
     def __init__(self, language: str = "zh"):
         self.language = language
         self.api_url = f"https://{language}.wikipedia.org/w/api.php"
+        self.headers = {
+            "User-Agent": "PPTAS-Bot/1.0 (https://github.com/user/pptas)"
+        }
     
     def search(self, query: str, limit: int = 3) -> List[Document]:
         """搜索维基百科"""
@@ -39,7 +42,14 @@ class WikipediaMCP:
         }
         
         try:
-            response = requests.get(self.api_url, params=params, timeout=10)
+            response = requests.get(self.api_url, params=params, timeout=10, headers=self.headers)
+            response.raise_for_status()  # 检查 HTTP 状态
+            
+            # 检查响应是否为空
+            if not response.text:
+                print(f"Wikipedia search error: Empty response for query '{query}'")
+                return []
+            
             data = response.json()
             
             documents = []
@@ -58,7 +68,7 @@ class WikipediaMCP:
             
             return documents
         except Exception as e:
-            print(f"Wikipedia search error: {e}")
+            print(f"Wikipedia search error: {type(e).__name__}: {e}")
             return []
     
     def _get_page_content(self, title: str) -> Optional[str]:
@@ -73,15 +83,23 @@ class WikipediaMCP:
         }
         
         try:
-            response = requests.get(self.api_url, params=params, timeout=10)
+            response = requests.get(self.api_url, params=params, timeout=10, headers=self.headers)
+            response.raise_for_status()
+            
+            if not response.text:
+                return None
+            
             data = response.json()
             pages = data.get("query", {}).get("pages", {})
             
             for page in pages.values():
-                return page.get("extract", "")[:1000]  # 限制长度
+                content = page.get("extract", "")
+                if content:
+                    return content[:1000]  # 限制长度
             
             return None
-        except:
+        except Exception as e:
+            print(f"Get Wikipedia page content error: {type(e).__name__}: {e}")
             return None
 
 
@@ -238,6 +256,8 @@ class MCPRouter:
             "scholar": GoogleScholarMCP(),
             "baike": BaiduBaikeMCP()
         }
+        # 只启用稳定的源，禁用容易出错的网络源
+        self.enabled_sources = ["arxiv"]  
     
     def search(self, query: str, preferred_sources: List[str] = None) -> List[Document]:
         """智能搜索
@@ -248,33 +268,51 @@ class MCPRouter:
         """
         all_documents = []
         
-        # 如果指定了优先源
+        # 如果指定了优先源，检查是否启用
         if preferred_sources:
             for source in preferred_sources:
+                if source not in self.enabled_sources:
+                    print(f"Source {source} is disabled (network unstable), skipping...")
+                    continue
                 if source in self.tools:
-                    docs = self.tools[source].search(query)
-                    all_documents.extend(docs)
+                    try:
+                        docs = self.tools[source].search(query)
+                        all_documents.extend(docs)
+                    except Exception as e:
+                        print(f"Error searching {source}: {e}")
+                        continue
         else:
-            # 自动选择：学术概念优先 arxiv，通用概念优先 wikipedia
-            if self._is_academic_query(query):
-                # 学术查询
-                all_documents.extend(self.tools["arxiv"].search(query, max_results=2))
-                all_documents.extend(self.tools["wikipedia"].search(query, limit=1))
-            else:
-                # 通用查询
-                all_documents.extend(self.tools["wikipedia"].search(query, limit=2))
-                all_documents.extend(self.tools["baike"].search(query))
+            # 自动选择：优先使用 Arxiv（更稳定）
+            try:
+                all_documents.extend(self.tools["arxiv"].search(query, max_results=3))
+            except Exception as e:
+                print(f"Arxiv search failed: {e}")
+        
+        # 如果没有结果，返回一个占位符
+        if not all_documents:
+            print(f"No results found for query: {query}")
+            all_documents = [Document(
+                page_content=f"未找到关于 '{query}' 的学术资源。这可能是因为网络连接问题或搜索词不匹配。",
+                metadata={
+                    "source": "Local",
+                    "title": query,
+                    "url": ""
+                }
+            )]
         
         # 去重
         seen_urls = set()
         unique_docs = []
         for doc in all_documents:
             url = doc.metadata.get("url", "")
-            if url not in seen_urls:
+            if url and url not in seen_urls:
                 seen_urls.add(url)
                 unique_docs.append(doc)
+            elif not url:
+                # 允许本地占位符文档
+                unique_docs.append(doc)
         
-        return unique_docs
+        return unique_docs[:5]  # 限制结果数量
     
     def _is_academic_query(self, query: str) -> bool:
         """判断是否为学术查询"""

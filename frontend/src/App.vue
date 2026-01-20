@@ -31,8 +31,10 @@ const handleFileUpload = async (file) => {
     const response = await pptApi.uploadAndExpand(file);
     // 后端返回 { slides: [...] }
     slidesData.value = response.data.slides || [];
-    await buildMindmapForDeck();
-    appState.value = 'workspace';
+    appState.value = 'workspace';  // 立即进入工作台
+    
+    // 异步生成思维导图（不阻挡UI）
+    buildMindmapForDeck().catch(err => console.error("思维导图生成失败:", err));
   } catch (error) {
     console.error("上传失败", error);
     alert("解析失败: " + (error.response?.data?.detail || error.message));
@@ -46,7 +48,7 @@ const simulateMockData = async () => {
     appState.value = 'upload';
     
     // 模拟 API 延迟
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 800));
     
     slidesData.value = [
       {
@@ -74,9 +76,12 @@ const simulateMockData = async () => {
         references: [{title: "Self-Attention Networks", url: "#", source: "Arxiv"}]
       }
     ];
-    await buildMindmapForDeck();
-    appState.value = 'workspace';
+    
+    appState.value = 'workspace';  // 立即进入工作台
     isLoading.value = false;
+    
+    // 异步生成思维导图
+    buildMindmapForDeck().catch(err => console.error("思维导图生成失败:", err));
 };
 
 const buildMindmapForDeck = async () => {

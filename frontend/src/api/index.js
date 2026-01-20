@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const service = axios.create({
     baseURL: '/api/v1',
-    timeout: 30000  // 增加超时以支持 AI 分析
+    timeout: 120000  // 增加到 120 秒，支持 AI 分析可能耗时较长
 })
 
 export const pptApi = {
