@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from langchain_core.documents import Document
 
-from services.mcp_tools import MCPRouter
+from .mcp_tools import MCPRouter
 
 
 class ReferenceItem(BaseModel):

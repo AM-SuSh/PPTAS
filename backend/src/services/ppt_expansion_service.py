@@ -6,8 +6,8 @@ import os
 
 from langgraph.graph import StateGraph, END
 
-from services.ppt_parser_service import DocumentParserService
-from agents.base import (
+from .ppt_parser_service import DocumentParserService
+from ..agents.base import (
     LLMConfig,
     GlobalStructureAgent,
     KnowledgeClusteringAgent,
@@ -18,7 +18,7 @@ from agents.base import (
     ConsistencyCheckAgent,
     StructuredOrganizationAgent,
 )
-from agents.models import GraphState
+from ..agents.models import GraphState
 
 
 class PPTExpansionService:

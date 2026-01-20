@@ -8,7 +8,7 @@ from langchain.prompts import ChatPromptTemplate, PromptTemplate
 from langchain.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 
-from services.mcp_tools import MCPRouter
+from .mcp_tools import MCPRouter
 
 
 class DeepAnalysisResult(BaseModel):
