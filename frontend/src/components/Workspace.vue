@@ -151,21 +151,16 @@ const selectSlide = async (index) => {
   currentSlideIndex.value = index
   const pageId = index + 1
 
-  // 已缓存则跳过分析
+  // 已缓存则直接使用
   if (analysisCache.value[pageId]) {
     const cached = analysisCache.value[pageId]
     Object.assign(props.slides[index], cached)
-    console.log('✅ 使用缓存数据:', cached)
+    console.log('✅ 使用缓存数据 (页面 ' + pageId + ')')
     return
   }
 
-  // 如果没有 deep_analysis，执行分析
-  if (!props.slides[index]?.deep_analysis) {
-    console.log('🔄 页面 ' + pageId + ' 需要分析，触发 analyzeCurrentPage...')
-    await analyzeCurrentPage()
-  } else {
-    console.log('✅ 页面 ' + pageId + ' 已有分析数据，无需重新分析')
-  }
+  // 新页面加载，不自动分析，等待用户点击按钮
+  console.log('📄 加载页面 ' + pageId + '，等待用户决定是否进行 AI 分析')
 }
 
 const handleToolChange = (toolName) => {

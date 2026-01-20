@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { pptApi } from '../api/index.js'
 import MindmapGraph from './MindmapGraph.vue'
 
@@ -23,6 +23,9 @@ const searchQuery = ref('')
 const isSearching = ref(false)
 const searchResults = ref([])
 const searchType = ref('all')
+
+// AI 分析控制
+const shouldShowAIAnalysis = ref(false)  // 控制是否显示AI分析卡片
 
 // Markdown 转 HTML 工具函数
 const markdownToHtml = (markdown) => {
@@ -48,6 +51,11 @@ onMounted(() => {
   }
 })
 
+// 监听 slide 变化，重置 AI 分析状态
+watch(() => props.slide?.page_num, () => {
+  shouldShowAIAnalysis.value = false
+})
+
 const initChat = async () => {
   if (!props.slide?.title) return
   
@@ -58,6 +66,58 @@ const initChat = async () => {
       timestamp: new Date().toISOString()
     }
   ]
+}
+
+// 触发 AI 分析
+const triggerAIAnalysis = async () => {
+  if (!props.slide?.page_num) return
+  
+  shouldShowAIAnalysis.value = true
+  
+  // 如果已经有分析结果，直接显示
+  if (props.slide?.deep_analysis && !props.slide.deep_analysis.includes('❌')) {
+    return
+  }
+  
+  // 如果没有分析结果，触发分析
+  // 向父组件发送事件进行分析
+  if (!props.slide?.deep_analysis) {
+    console.log('🤖 用户触发了 AI 分析，开始分析页面 ' + props.slide.page_num)
+    // 这里调用后端 API 进行分析
+    await analyzePageWithAI()
+  }
+}
+
+// AI 分析函数
+const analyzePageWithAI = async () => {
+  const pageId = props.slide.page_num || 1
+  
+  try {
+    console.log('📤 发送 AI 分析请求...')
+    const response = await pptApi.analyzePage(
+      pageId,
+      props.slide.title || '',
+      props.slide.raw_content || '',
+      props.slide.raw_points || []
+    )
+    
+    console.log('✅ 收到分析结果')
+    
+    // 提取分析数据
+    let analysisData = response.data?.data || response.data
+    
+    if (analysisData?.deep_analysis) {
+      // 更新 slide 对象
+      props.slide.deep_analysis = analysisData.deep_analysis
+      props.slide.deep_analysis_html = markdownToHtml(analysisData.deep_analysis)
+      props.slide.key_concepts = analysisData.key_concepts || []
+      props.slide.learning_objectives = analysisData.learning_objectives || []
+      props.slide.references = analysisData.references || []
+    }
+  } catch (error) {
+    console.error('❌ AI 分析失败:', error)
+    props.slide.deep_analysis = `❌ 分析失败: ${error.message || '未知错误'}`
+  }
 }
 
 // 发送聊天消息
@@ -262,8 +322,26 @@ const checkLLMConnection = async () => {
           </div>
         </div>
 
-        <!-- AI 深度分析 -->
-        <div class="card ai-card">
+        <!-- AI 分析触发按钮 -->
+        <div class="ai-analysis-trigger">
+          <button 
+            v-if="!shouldShowAIAnalysis"
+            @click="triggerAIAnalysis"
+            class="btn-analyze-page"
+          >
+            🤖 使用 AI 深度分析此页面
+          </button>
+          <button 
+            v-else
+            @click="shouldShowAIAnalysis = false"
+            class="btn-analyze-page btn-collapse"
+          >
+            ⏷ 收起 AI 分析
+          </button>
+        </div>
+
+        <!-- AI 深度分析 - 仅在用户点击按钮时显示 -->
+        <div v-if="shouldShowAIAnalysis" class="card ai-card">
           <h3 class="card-title">🤖 AI 深度解析</h3>
           
           <!-- 学习目标 -->
@@ -338,7 +416,7 @@ const checkLLMConnection = async () => {
                   <div class="connection-item">
                     <span class="item-label">📊 数据状态:</span>
                     <span class="item-value" :class="!slide.deep_analysis ? 'status-empty' : slide.deep_analysis.includes('待补充') ? 'status-pending' : 'status-ok'">
-                      <span v-if="!slide.deep_analysis">❌ deep_analysis 字段为空</span>
+                      <span v-if="!slide.deep_analysis">LLM尚未回复，请勿离开此页面</span>
                       <span v-else-if="slide.deep_analysis.includes('待补充')">⏳ 标记为"待补充"</span>
                       <span v-else>✓ 已有内容 ({{ slide.deep_analysis.length }} 字符)</span>
                     </span>
@@ -1607,5 +1685,49 @@ const checkLLMConnection = async () => {
 
 .check-btn.llm-btn:hover {
   background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+}
+
+/* AI 分析触发按钮样式 */
+.ai-analysis-trigger {
+  display: flex;
+  justify-content: center;
+  margin: 2rem 0;
+}
+
+.btn-analyze-page {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  border: none;
+  padding: 1rem 2rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-analyze-page:hover {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+  transform: translateY(-2px);
+}
+
+.btn-analyze-page:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.btn-analyze-page.btn-collapse {
+  background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+  box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
+}
+
+.btn-analyze-page.btn-collapse:hover {
+  background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
+  box-shadow: 0 6px 16px rgba(107, 114, 128, 0.4);
 }
 </style>
