@@ -5,7 +5,10 @@ import PPTPreview from './PPTPreview.vue'
 import ContentView from './ContentView.vue'
 
 const props = defineProps({
-  slides: Array
+  slides: Array,
+  mindmap: Object,
+  mindmapLoading: Boolean,
+  mindmapError: String
 })
 
 const currentSlideIndex = ref(0)
@@ -37,6 +40,9 @@ const handleToolChange = (toolName) => {
         <ContentView
           :slide="currentSlide"
           :active-tool="activeTool"
+          :mindmap="mindmap"
+          :mindmap-loading="mindmapLoading"
+          :mindmap-error="mindmapError"
         />
       </div>
     </div>
@@ -57,7 +63,18 @@ const handleToolChange = (toolName) => {
   overflow: hidden;
   width: 100vw; /* 确保容器不超宽 */
 }
+.workspace-container {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
 
+/* 假设你使用了 Tab 切换或者分栏，确保导图容器撑满 */
+.graph-wrapper {
+  flex: 1;
+  height: 100%;
+  position: relative;
+}
 .workspace-main {
   flex: 1;
   display: flex;

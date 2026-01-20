@@ -10,6 +10,9 @@ const appState = ref('upload'); // 'upload' | 'workspace'
 const isLoading = ref(false);
 const fileName = ref('');
 const slidesData = ref([]);
+const mindmapData = ref(null);
+const mindmapLoading = ref(false);
+const mindmapError = ref('');
 
 // 上传处理
 const handleFileUpload = async (file) => {
@@ -28,7 +31,7 @@ const handleFileUpload = async (file) => {
     const response = await pptApi.uploadAndExpand(file);
     // 后端返回 { slides: [...] }
     slidesData.value = response.data.slides || [];
-    
+    await buildMindmapForDeck();
     appState.value = 'workspace';
   } catch (error) {
     console.error("上传失败", error);
@@ -71,14 +74,44 @@ const simulateMockData = async () => {
         references: [{title: "Self-Attention Networks", url: "#", source: "Arxiv"}]
       }
     ];
+    await buildMindmapForDeck();
     appState.value = 'workspace';
     isLoading.value = false;
+};
+
+const buildMindmapForDeck = async () => {
+  if (!slidesData.value || slidesData.value.length === 0) {
+    mindmapData.value = null;
+    return;
+  }
+  mindmapLoading.value = true;
+  mindmapError.value = '';
+
+  const payload = {
+    title: fileName.value || 'PPT 思维导图',
+    slides: slidesData.value,
+    max_depth: 6,
+    max_children_per_node: 25
+  }
+
+  try {
+    const res = await pptApi.mindmapFromSlides(payload);
+    mindmapData.value = res.data;  // 保持完整响应格式 {root: {...}}
+  } catch (err) {
+    console.error('思维导图生成失败', err);
+    mindmapError.value = err.response?.data?.detail || err.message || '生成失败';
+    mindmapData.value = null;
+  } finally {
+    mindmapLoading.value = false;
+  }
 };
 
 const resetApp = () => {
   appState.value = 'upload';
   slidesData.value = [];
   fileName.value = '';
+  mindmapData.value = null;
+  mindmapError.value = '';
 };
 </script>
 
@@ -112,6 +145,9 @@ const resetApp = () => {
     <Workspace
         v-if="appState === 'workspace'"
         :slides="slidesData"
+        :mindmap="mindmapData"
+        :mindmap-loading="mindmapLoading"
+        :mindmap-error="mindmapError"
     />
   </div>
 </template>

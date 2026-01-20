@@ -1,9 +1,13 @@
 <script setup>
 import { ref } from 'vue'
+import MindmapGraph from './MindmapGraph.vue'
 
 const props = defineProps({
   slide: Object,
-  activeTool: String
+  activeTool: String,
+  mindmap: Object,
+  mindmapLoading: Boolean,
+  mindmapError: String
 })
 
 const searchQuery = ref('')
@@ -82,15 +86,32 @@ const handleSearch = () => {
     </div>
 
     <div v-if="activeTool === 'state-of-art'" class="view-section mindmap-view">
-      <div class="placeholder-graphic">
-        <div class="node center">"{{ slide?.title }}"</div>
-        <div class="branches">
-          <div class="node branch">核心概念</div>
-          <div class="node branch">应用场景</div>
-          <div class="node branch">相关论文</div>
+      <div class="mindmap-header">
+        <div>
+          <div class="content-header">
+            <h2 class="slide-title">思维导图</h2>
+            <span class="ai-badge">🧠 自动构建</span>
+          </div>
+          <p class="text-hint">基于整个 PPT 的层级要点生成</p>
         </div>
       </div>
-      <p class="text-hint">正在根据当前页内容生成动态思维导图...</p>
+
+      <div v-if="mindmapLoading" class="mindmap-loading">
+        <div class="mini-spinner"></div>
+        <p>正在生成思维导图...</p>
+      </div>
+
+      <div v-else-if="mindmapError" class="mindmap-error">
+        <p>生成失败：{{ mindmapError }}</p>
+      </div>
+
+      <div v-else-if="mindmap?.root" class="mindmap-tree-wrapper">
+        <MindmapGraph :root="mindmap.root" />
+      </div>
+
+      <div v-else class="mindmap-empty">
+        <p>暂无思维导图数据，请先上传 PPT。</p>
+      </div>
     </div>
 
     <div v-if="activeTool === 'search'" class="view-section search-view">
@@ -267,48 +288,37 @@ const handleSearch = () => {
 .mindmap-view {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 80%;
+  align-items: stretch;
+  justify-content: flex-start;
+  height: 100%;
+  min-height: 60vh;
 }
 
-.placeholder-graphic {
-  position: relative;
-  width: 300px;
-  height: 300px;
-  border: 2px dashed #cbd5e1;
-  border-radius: 50%;
+.mindmap-header {
+  margin-bottom: 1rem;
+}
+
+.mindmap-tree-wrapper {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 0;
+  background: #f8fafc;
+  overflow: hidden;
+  height: calc(100vh - 280px);
+  min-height: 500px;
+  flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  position: relative;
 }
 
-.node {
-  padding: 8px 16px;
-  border-radius: 20px;
-  background: white;
-  border: 2px solid #3b82f6;
-  font-weight: 600;
-  position: absolute;
+.mindmap-loading,
+.mindmap-error,
+.mindmap-empty {
+  padding: 2rem;
+  text-align: center;
+  color: #64748b;
 }
-
-.node.center {
-  background: #3b82f6;
-  color: white;
-  z-index: 2;
-}
-
-.branches .node.branch {
-  top: 50%;
-  left: 50%;
-  font-size: 0.8rem;
-  background: #fff;
-  color: #3b82f6;
-}
-
-.branches .node:nth-child(1) { transform: translate(-40px, -120px); }
-.branches .node:nth-child(2) { transform: translate(80px, -60px); }
-.branches .node:nth-child(3) { transform: translate(20px, 80px); }
 
 .search-bar {
   display: flex;
