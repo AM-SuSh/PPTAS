@@ -13,21 +13,48 @@ const slidesData = ref([]);
 
 // 上传处理
 const handleFileUpload = async (file) => {
-  fileName.value = file ? file.name : "深度学习架构分析.pptx";
+  if (!file) {
+    // 如果没有文件（例如点击了Mock按钮），则使用演示模式
+    fileName.value = "深度学习架构分析.pptx";
+    simulateMockData();
+    return;
+  }
+
+  fileName.value = file.name;
   isLoading.value = true;
-  appState.value = 'upload'; // 保持在上传界面显示加载
+  appState.value = 'upload';
 
   try {
-    // 模拟 API 调用，实际应替换为 uploadAndParsePPT
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    const response = await pptApi.uploadAndExpand(file);
+    // 后端返回 { slides: [...] }
+    slidesData.value = response.data.slides || [];
+    
+    appState.value = 'workspace';
+  } catch (error) {
+    console.error("上传失败", error);
+    alert("解析失败: " + (error.response?.data?.detail || error.message));
+  } finally {
+    isLoading.value = false;
+  }
+};
 
-    // 模拟返回数据
+const simulateMockData = async () => {
+    isLoading.value = true;
+    appState.value = 'upload';
+    
+    // 模拟 API 延迟
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
     slidesData.value = [
       {
         page_num: 1,
         title: "Transformer 结构总览",
         image: "https://via.placeholder.com/960x720?text=Slide+1",
-        raw_points: ["Encoder-Decoder 架构", "自注意力机制", "进入工作台"],
+        raw_points: [
+          { type: "text", text: "Encoder-Decoder 架构", level: 0 },
+          { type: "text", text: "自注意力机制", level: 1 },
+          { type: "text", text: "进入工作台", level: 0 }
+        ],
         expanded_html: "<p><strong>核心概念：</strong>Transformer 是一种完全基于注意力机制的架构，摒弃了传统的循环和卷积网络。</p>",
         references: [{title: "Attention Is All You Need", url: "#", source: "Arxiv"}]
       },
@@ -35,19 +62,17 @@ const handleFileUpload = async (file) => {
         page_num: 2,
         title: "Self-Attention 机制详解",
         image: "https://via.placeholder.com/960x720?text=Slide+2",
-        raw_points: ["Q, K, V 向量计算", "缩放点积", "Softmax 归一化"],
+        raw_points: [
+          { type: "text", text: "Q, K, V 向量计算", level: 0 },
+          { type: "text", text: "缩放点积", level: 1 },
+          { type: "text", text: "Softmax 归一化", level: 1 }
+        ],
         expanded_html: "<p><strong>计算公式：</strong>Attention(Q, K, V) = softmax(QK^T / √d_k)V。</p>",
         references: [{title: "Self-Attention Networks", url: "#", source: "Arxiv"}]
       }
     ];
-
     appState.value = 'workspace';
-  } catch (error) {
-    console.error("上传失败", error);
-    alert("解析失败，请重试");
-  } finally {
     isLoading.value = false;
-  }
 };
 
 const resetApp = () => {

@@ -39,3 +39,10 @@ frontend/
 ├── package-lock.json
 └── vite.config.js
 ```
+
+后端配置与运行：
+```
+cd PPTAS/backend
+pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```

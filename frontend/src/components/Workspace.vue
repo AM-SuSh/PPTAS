@@ -41,6 +41,7 @@ const handleToolChange = (toolName) => {
       </div>
     </div>
 
+    <!-- 将 Sidebar 放回右侧，并调整 CSS flex-shrink -->
     <ToolSidebar
       :active-tool="activeTool"
       @tool-change="handleToolChange"
@@ -54,12 +55,13 @@ const handleToolChange = (toolName) => {
   display: flex;
   height: calc(100vh - 64px);
   overflow: hidden;
+  width: 100vw; /* 确保容器不超宽 */
 }
 
 .workspace-main {
   flex: 1;
   display: flex;
-  width: 100%;
+  min-width: 0; /* 关键：允许 flex 子项缩小，防止内容撑开超出父容器 */
 }
 
 .left-panel {
@@ -68,6 +70,7 @@ const handleToolChange = (toolName) => {
   background: #f1f5f9;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .right-panel {
@@ -75,5 +78,6 @@ const handleToolChange = (toolName) => {
   background: #ffffff;
   overflow-y: auto;
   position: relative;
+  min-width: 0;
 }
 </style>
