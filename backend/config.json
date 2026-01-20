@@ -1,8 +1,8 @@
 {
   "llm": {
-    "api_key": "your-api-key-here",
-    "base_url": "https://api.openai.com/v1",
-    "model": "gpt-4"
+    "api_key": "sk-aikhxaddyhhvwodwvcdwwkrvvbqlwglkbigapjvwqjowdbah",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "model": "deepseek-ai/DeepSeek-V3.2-Exp"
   },
   "retrieval": {
     "preferred_sources": ["arxiv", "wikipedia"],

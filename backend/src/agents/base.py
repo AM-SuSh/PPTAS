@@ -1,23 +1,23 @@
-"""
-PPT 智能扩展系统 - 基于 LangGraph 的多 Agent 协作架构
-"""
+"""PPT 扩展系统的各个 Agent 实现"""
 
-from typing import TypedDict, List, Dict, Any, Annotated, Literal
-from dataclasses import dataclass
-from enum import Enum
-import operator
+from typing import List, Dict, Any
+import json
 
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate, ChatPromptTemplate
 from langchain.output_parsers import PydanticOutputParser, StructuredOutputParser, ResponseSchema
-from langchain_core.runnables import RunnableMap, RunnablePassthrough
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from langgraph.graph import StateGraph, END
-from pydantic import BaseModel, Field
+from .models import (
+    PageStructure,
+    KnowledgeGap,
+    ExpandedContent,
+    CheckResult,
+    KnowledgeUnit,
+    GraphState,
+)
 
 
 # ==================== 配置管理 ====================
@@ -36,77 +36,6 @@ class LLMConfig:
             max_retries=3,
             temperature=temperature
         )
-
-
-# ==================== 数据模型 ====================
-class PageStructure(BaseModel):
-    """页面结构解析结果"""
-    page_id: int = Field(description="页面 ID")
-    title: str = Field(description="页面标题")
-    main_concepts: List[str] = Field(description="主要概念")
-    key_points: List[str] = Field(description="关键要点")
-    relationships: Dict[str, str] = Field(description="概念关系")
-    teaching_goal: str = Field(description="教学目标")
-
-
-class KnowledgeGap(BaseModel):
-    """知识缺口"""
-    concept: str = Field(description="概念名称")
-    gap_types: List[str] = Field(description="缺口类型：如直观解释、公式推导等")
-    priority: int = Field(description="优先级 1-5")
-
-
-class ExpandedContent(BaseModel):
-    """扩展内容"""
-    concept: str = Field(description="概念名称")
-    gap_type: str = Field(description="缺口类型")
-    content: str = Field(description="扩展内容")
-    sources: List[str] = Field(default_factory=list, description="来源")
-
-
-class CheckResult(BaseModel):
-    """一致性校验结果"""
-    status: Literal["pass", "revise"] = Field(description="校验状态")
-    issues: List[str] = Field(default_factory=list, description="发现的问题")
-    suggestions: List[str] = Field(default_factory=list, description="改进建议")
-
-
-class KnowledgeUnit(BaseModel):
-    """知识单元"""
-    unit_id: str = Field(description="单元 ID")
-    title: str = Field(description="单元标题")
-    pages: List[int] = Field(description="涉及的页面")
-    core_concepts: List[str] = Field(description="核心概念")
-    raw_texts: List[str] = Field(description="原始文本")
-
-
-# ==================== Graph State ====================
-class GraphState(TypedDict):
-    """LangGraph 状态"""
-    # 全局输入
-    ppt_texts: List[str]
-    global_outline: Dict[str, Any]
-    knowledge_units: List[KnowledgeUnit]
-    
-    # 当前处理单元
-    current_unit_id: str
-    current_page_id: int
-    raw_text: str
-    
-    # Agent 输出
-    page_structure: PageStructure
-    knowledge_gaps: List[KnowledgeGap]
-    expanded_content: List[ExpandedContent]
-    retrieved_docs: List[Document]
-    check_result: CheckResult
-    final_notes: str
-    
-    # 控制流
-    revision_count: int
-    max_revisions: int
-    
-    # 流式输出
-    streaming_chunks: Annotated[List[str], operator.add]
 
 
 # ==================== Step 0-A: 全局结构解析 Agent ====================
@@ -200,9 +129,11 @@ PPT 内容：
         })
         
         # 解析为 KnowledgeUnit 列表
-        import json
-        units_data = json.loads(response.content)
-        knowledge_units = [KnowledgeUnit(**unit) for unit in units_data]
+        try:
+            units_data = json.loads(response.content)
+            knowledge_units = [KnowledgeUnit(**unit) for unit in units_data]
+        except:
+            knowledge_units = []
         
         state["knowledge_units"] = knowledge_units
         return state
@@ -280,7 +211,7 @@ class GapIdentificationAgent:
         
         chain = prompt | self.llm | self.parser
         knowledge_gaps = chain.invoke({
-            "page_structure": state["page_structure"].dict(),
+            "page_structure": state["page_structure"].model_dump(),
             "raw_text": state["raw_text"]
         })
         
@@ -380,7 +311,6 @@ class RetrievalAgent:
     def retrieve_external(self, query: str) -> List[Document]:
         """外部 MCP 工具检索（示例：维基百科、Arxiv）"""
         # TODO: 集成 MCP 工具
-        # 这里需要集成实际的 MCP 工具，如 Wikipedia API, Arxiv API
         return []
     
     def run(self, state: GraphState) -> GraphState:
@@ -514,119 +444,3 @@ class StructuredOrganizationAgent:
         state["final_notes"] = response.content
         state["streaming_chunks"] = [response.content]
         return state
-
-
-# ==================== LangGraph 工作流构建 ====================
-class PPTExpansionGraph:
-    """PPT 扩展系统主工作流"""
-    
-    def __init__(self, llm_config: LLMConfig):
-        self.config = llm_config
-        
-        # 初始化所有 Agent
-        self.global_structure_agent = GlobalStructureAgent(llm_config)
-        self.clustering_agent = KnowledgeClusteringAgent(llm_config)
-        self.structure_agent = StructureUnderstandingAgent(llm_config)
-        self.gap_agent = GapIdentificationAgent(llm_config)
-        self.expansion_agent = KnowledgeExpansionAgent(llm_config)
-        self.retrieval_agent = RetrievalAgent(llm_config)
-        self.check_agent = ConsistencyCheckAgent(llm_config)
-        self.organization_agent = StructuredOrganizationAgent(llm_config)
-        
-        # 构建 Graph
-        self.graph = self._build_graph()
-    
-    def _build_graph(self) -> StateGraph:
-        """构建 LangGraph 工作流"""
-        workflow = StateGraph(GraphState)
-        
-        # 添加节点
-        workflow.add_node("global_structure", self.global_structure_agent.run)
-        workflow.add_node("knowledge_clustering", self.clustering_agent.run)
-        workflow.add_node("structure_understanding", self.structure_agent.run)
-        workflow.add_node("gap_identification", self.gap_agent.run)
-        workflow.add_node("knowledge_expansion", self.expansion_agent.run)
-        workflow.add_node("retrieval", self.retrieval_agent.run)
-        workflow.add_node("consistency_check", self.check_agent.run)
-        workflow.add_node("structured_organization", self.organization_agent.run)
-        
-        # 定义边
-        workflow.set_entry_point("global_structure")
-        workflow.add_edge("global_structure", "knowledge_clustering")
-        workflow.add_edge("knowledge_clustering", "structure_understanding")
-        workflow.add_edge("structure_understanding", "gap_identification")
-        workflow.add_edge("gap_identification", "knowledge_expansion")
-        workflow.add_edge("gap_identification", "retrieval")  # 并行
-        workflow.add_edge("knowledge_expansion", "consistency_check")
-        workflow.add_edge("retrieval", "consistency_check")
-        
-        # 条件边：校验通过 -> 整理，校验失败 -> 重新扩展
-        workflow.add_conditional_edges(
-            "consistency_check",
-            self._should_revise,
-            {
-                "revise": "knowledge_expansion",
-                "pass": "structured_organization"
-            }
-        )
-        
-        workflow.add_edge("structured_organization", END)
-        
-        return workflow.compile()
-    
-    def _should_revise(self, state: GraphState) -> str:
-        """判断是否需要修订"""
-        if state["check_result"].status == "revise":
-            if state.get("revision_count", 0) < state.get("max_revisions", 2):
-                state["revision_count"] = state.get("revision_count", 0) + 1
-                return "revise"
-        return "pass"
-    
-    def run(self, ppt_texts: List[str], max_revisions: int = 2) -> GraphState:
-        """运行完整流程"""
-        initial_state: GraphState = {
-            "ppt_texts": ppt_texts,
-            "global_outline": {},
-            "knowledge_units": [],
-            "current_unit_id": "",
-            "current_page_id": 0,
-            "raw_text": "",
-            "page_structure": None,
-            "knowledge_gaps": [],
-            "expanded_content": [],
-            "retrieved_docs": [],
-            "check_result": None,
-            "final_notes": "",
-            "revision_count": 0,
-            "max_revisions": max_revisions,
-            "streaming_chunks": []
-        }
-        
-        result = self.graph.invoke(initial_state)
-        return result
-
-
-# ==================== 使用示例 ====================
-if __name__ == "__main__":
-    # 配置 LLM
-    config = LLMConfig(
-        api_key="your-api-key",
-        base_url="https://api.openai.com/v1",
-        model="gpt-4"
-    )
-    
-    # 创建 Graph
-    ppt_graph = PPTExpansionGraph(config)
-    
-    # 示例 PPT 文本
-    ppt_texts = [
-        "第一页：Transformer 架构概述",
-        "第二页：Self-Attention 机制\nQ = XW_q, K = XW_k, V = XW_v",
-        "第三页：Position Encoding\nPE(pos, 2i) = sin(pos/10000^(2i/d))"
-    ]
-    
-    # 运行流程
-    result = ppt_graph.run(ppt_texts)
-    
-    print("最终笔记：")
-    print(result["final_notes"])

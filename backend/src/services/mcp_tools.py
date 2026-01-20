@@ -145,7 +145,6 @@ class GoogleScholarMCP:
         """搜索 Google Scholar
         注意：这是简化版，生产环境建议使用 SerpAPI 等服务
         """
-        # 这里仅作示例，实际使用建议集成 SerpAPI 或 ScraperAPI
         url = f"https://scholar.google.com/scholar?q={query}"
         
         try:
@@ -284,21 +283,3 @@ class MCPRouter:
             "算法", "模型", "神经", "学习", "理论", "公式", "证明"
         ]
         return any(keyword in query.lower() for keyword in academic_keywords)
-
-
-# ==================== 使用示例 ====================
-if __name__ == "__main__":
-    # 创建路由器
-    router = MCPRouter()
-    
-    # 测试搜索
-    query = "Transformer Self-Attention"
-    results = router.search(query)
-    
-    print(f"搜索 '{query}' 的结果：")
-    for i, doc in enumerate(results, 1):
-        print(f"\n结果 {i}:")
-        print(f"来源: {doc.metadata['source']}")
-        print(f"标题: {doc.metadata['title']}")
-        print(f"内容: {doc.page_content[:200]}...")
-        print(f"链接: {doc.metadata.get('url', 'N/A')}")
