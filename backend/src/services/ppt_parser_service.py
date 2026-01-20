@@ -1,4 +1,8 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+import base64
+import os
+import subprocess
+import tempfile
 import fitz  # PyMuPDF
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -13,6 +17,136 @@ class DocumentParserService:
         if ext == ".pptx":
             return self._parse_pptx(path)
         return []
+
+    def _render_page_to_image(self, page, zoom: float = 2.0) -> str:
+        """将PDF页面渲染为base64编码的PNG图片"""
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+        img_data = pix.tobytes("png")
+        base64_str = base64.b64encode(img_data).decode('utf-8')
+        return f"data:image/png;base64,{base64_str}"
+
+    def _render_pptx_slide_to_image(self, pptx_path: str, slide_index: int) -> Optional[str]:
+        """将PPTX的某一页渲染为base64编码的PNG图片"""
+        try:
+            # 方法1: 尝试使用comtypes调用PowerPoint (Windows)
+            if os.name == 'nt':  # Windows系统
+                try:
+                    return self._render_pptx_with_powerpoint(pptx_path, slide_index)
+                except Exception:
+                    pass
+            
+            # 方法2: 尝试使用LibreOffice
+            try:
+                return self._render_pptx_with_libreoffice(pptx_path, slide_index)
+            except Exception:
+                pass
+            
+            # 如果都失败，返回None，前端会显示占位符
+            return None
+        except Exception as e:
+            print(f"渲染PPTX幻灯片失败: {e}")
+            return None
+
+    def _render_pptx_with_powerpoint(self, pptx_path: str, slide_index: int) -> str:
+        """使用PowerPoint COM接口渲染PPTX (仅Windows)"""
+        try:
+            import comtypes.client
+            import comtypes.gen.Microsoft.Office.Interop.PowerPoint as PPT
+            
+            # 创建PowerPoint应用（隐藏窗口）
+            powerpoint = comtypes.client.CreateObject("PowerPoint.Application")
+            powerpoint.Visible = 0  # 隐藏窗口，适合服务器环境
+            
+            # 打开演示文稿
+            abs_path = os.path.abspath(pptx_path)
+            presentation = powerpoint.Presentations.Open(abs_path)
+            
+            # 获取指定幻灯片
+            slide = presentation.Slides[slide_index]
+            
+            # 导出为图片
+            temp_img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            temp_img_path = temp_img.name
+            temp_img.close()
+            
+            # 导出幻灯片为PNG (宽度1920像素，保持宽高比)
+            slide.Export(temp_img_path, "PNG", 1920, 1080)
+            
+            # 读取图片并转换为base64
+            with open(temp_img_path, 'rb') as f:
+                img_data = f.read()
+            base64_str = base64.b64encode(img_data).decode('utf-8')
+            
+            # 清理
+            presentation.Close()
+            powerpoint.Quit()
+            os.unlink(temp_img_path)
+            
+            return f"data:image/png;base64,{base64_str}"
+        except ImportError:
+            raise Exception("需要安装comtypes: pip install comtypes")
+        except Exception as e:
+            raise Exception(f"PowerPoint渲染失败: {e}")
+
+    def _render_pptx_with_libreoffice(self, pptx_path: str, slide_index: int) -> str:
+        """使用LibreOffice命令行工具渲染PPTX"""
+        # 查找LibreOffice可执行文件
+        libreoffice_paths = [
+            "soffice",  # Linux/Mac
+            "C:\\Program Files\\LibreOffice\\program\\soffice.exe",  # Windows默认路径
+            "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",  # Windows 32位
+        ]
+        
+        soffice = None
+        for path in libreoffice_paths:
+            if os.path.exists(path) or path == "soffice":
+                try:
+                    # 测试命令是否可用
+                    result = subprocess.run(
+                        [path, "--version"],
+                        capture_output=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        soffice = path
+                        break
+                except:
+                    continue
+        
+        if not soffice:
+            raise Exception("未找到LibreOffice，请安装LibreOffice")
+        
+        # 创建临时输出目录
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # 使用LibreOffice将PPTX转换为PDF
+            abs_path = os.path.abspath(pptx_path)
+            result = subprocess.run(
+                [soffice, "--headless", "--convert-to", "pdf", "--outdir", temp_dir, abs_path],
+                capture_output=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                raise Exception(f"LibreOffice转换失败: {result.stderr.decode()}")
+            
+            # 找到生成的PDF文件
+            pdf_name = os.path.splitext(os.path.basename(pptx_path))[0] + ".pdf"
+            pdf_path = os.path.join(temp_dir, pdf_name)
+            
+            if not os.path.exists(pdf_path):
+                raise Exception("LibreOffice未生成PDF文件")
+            
+            # 使用PyMuPDF渲染PDF的指定页面
+            pdf_doc = fitz.open(pdf_path)
+            if slide_index < len(pdf_doc):
+                page = pdf_doc[slide_index]
+                img_base64 = self._render_page_to_image(page)
+                pdf_doc.close()
+                return img_base64
+            else:
+                pdf_doc.close()
+                raise Exception(f"幻灯片索引 {slide_index} 超出范围")
 
     def _parse_pdf(self, path: str) -> List[Dict[str, Any]]:
         doc = fitz.open(path)
@@ -113,6 +247,9 @@ class DocumentParserService:
                 {"type": "text", "level": 0, "text": p} for p in raw_points
             ]
 
+            # 渲染页面为图片
+            page_image = self._render_page_to_image(page)
+            
             slides.append({
                 "page_num": i,
                 "title": title[:100],
@@ -121,8 +258,10 @@ class DocumentParserService:
                 # 如果有图片，标记存在
                 "images": ([f"[包含 {image_count} 张图片/图表]"] if image_count > 0 else []),
                 "expanded_html": "<p><i>待补充 AI 深度解析内容...</i></p>",
-                "references": []
+                "references": [],
+                "image": page_image  # 添加页面图片
             })
+        doc.close()
         return slides
 
     def _parse_pptx(self, path: str) -> List[Dict[str, Any]]:
@@ -209,6 +348,9 @@ class DocumentParserService:
                  # 可能是详细列表页
                  pass
 
+            # 渲染幻灯片为图片 (索引从0开始)
+            slide_image = self._render_pptx_slide_to_image(path, i - 1)
+            
             slides.append({
                 "page_num": i,
                 "title": title if title else f"Slide {i}",
@@ -216,7 +358,8 @@ class DocumentParserService:
                 "raw_points": bullets[:20], # 限制数量
                 "images": img_descriptions,
                 "expanded_html": "<p><i>待补充 AI 深度解析内容...</i></p>",
-                "references": []
+                "references": [],
+                "image": slide_image  # 添加幻灯片图片
             })
         
         return slides

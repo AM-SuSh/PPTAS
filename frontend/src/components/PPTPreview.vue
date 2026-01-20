@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
 
 const props = defineProps({
   slides: Array,
@@ -9,6 +9,8 @@ const props = defineProps({
 const emit = defineEmits(['select'])
 
 const hasSlides = computed(() => props.slides && props.slides.length > 0)
+const mainStageRef = ref(null)
+const thumbnailListRef = ref(null)
 
 const selectPrev = () => {
   if (!hasSlides.value) return
@@ -21,11 +23,74 @@ const selectNext = () => {
   const next = (props.currentIndex + 1) % props.slides.length
   emit('select', next)
 }
+
+// 鼠标滚轮切换页面
+let wheelTimeout = null
+const handleWheel = (e) => {
+  // 防止默认滚动行为
+  e.preventDefault()
+  
+  // 防抖处理，避免滚动过快
+  if (wheelTimeout) {
+    clearTimeout(wheelTimeout)
+  }
+  
+  wheelTimeout = setTimeout(() => {
+    const delta = e.deltaY
+    if (delta > 0) {
+      // 向下滚动，切换到下一页
+      selectNext()
+    } else if (delta < 0) {
+      // 向上滚动，切换到上一页
+      selectPrev()
+    }
+  }, 100)
+}
+
+// 滚动到当前激活的缩略图
+const scrollToActiveThumb = () => {
+  nextTick(() => {
+    if (thumbnailListRef.value && props.currentIndex !== undefined && props.currentIndex >= 0) {
+      // 使用 querySelector 查找激活的缩略图
+      const activeThumb = thumbnailListRef.value.querySelector(`.thumb-item:nth-child(${props.currentIndex + 1})`)
+      if (activeThumb) {
+        activeThumb.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+          inline: 'center'
+        })
+      }
+    }
+  })
+}
+
+// 监听 currentIndex 变化，自动滚动缩略图
+watch(() => props.currentIndex, () => {
+  scrollToActiveThumb()
+}, { immediate: true })
+
+onMounted(() => {
+  // 在主区域添加滚轮事件监听
+  if (mainStageRef.value) {
+    mainStageRef.value.addEventListener('wheel', handleWheel, { passive: false })
+  }
+  // 初始化时滚动到当前激活的缩略图
+  scrollToActiveThumb()
+})
+
+onUnmounted(() => {
+  if (mainStageRef.value) {
+    mainStageRef.value.removeEventListener('wheel', handleWheel)
+  }
+  if (wheelTimeout) {
+    clearTimeout(wheelTimeout)
+  }
+})
 </script>
 
 <template>
   <div class="ppt-preview-container" v-if="hasSlides">
-    <div class="main-stage">
+    <div class="main-stage" ref="mainStageRef">
       <button class="nav-btn prev" @click="selectPrev">‹</button>
       <div class="slide-number-badge">Slide {{ (currentIndex || 0) + 1 }} / {{ slides.length }}</div>
       <div class="slide-image-wrapper">
@@ -50,7 +115,7 @@ const selectNext = () => {
       <button class="nav-btn next" @click="selectNext">›</button>
     </div>
 
-    <div class="thumbnail-list">
+    <div class="thumbnail-list" ref="thumbnailListRef">
       <div
         v-for="(slide, index) in slides"
         :key="slide.page_num"
@@ -80,7 +145,7 @@ const selectNext = () => {
 }
 
 .main-stage {
-  flex: 2;
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -90,6 +155,8 @@ const selectNext = () => {
   border-bottom: 1px solid #cbd5e1;
   position: relative;
   background: #cbd5e1;
+  overflow: hidden;
+  cursor: pointer;
 }
 
 .slide-number-badge {
@@ -131,6 +198,24 @@ const selectNext = () => {
   font-size: 0.9rem;
 }
 
+.wheel-hint {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  opacity: 0.7;
+  text-align: center;
+  animation: fadeInOut 3s ease-in-out infinite;
+}
+
+@keyframes fadeInOut {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
 .nav-btn {
   width: 38px;
   height: 38px;
@@ -163,37 +248,65 @@ const selectNext = () => {
 }
 
 .thumbnail-list {
-  flex: 1;
+  height: 140px;
+  min-height: 140px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 10px 16px;
+  padding: 12px 16px;
   display: flex;
-  gap: 12px;
-  background: #f1f5f9;
+  gap: 10px;
+  background: #f8fafc;
   scroll-snap-type: x mandatory;
+  border-top: 1px solid #e2e8f0;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
+}
+
+/* 优化滚动条样式 */
+.thumbnail-list::-webkit-scrollbar {
+  height: 6px;
+}
+
+.thumbnail-list::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 3px;
+}
+
+.thumbnail-list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+  transition: background 0.2s;
+}
+
+.thumbnail-list::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 .thumb-item {
   position: relative;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
-  border: 2px solid transparent;
-  transition: all 0.2s;
+  border: 3px solid transparent;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   aspect-ratio: 16/9;
-  width: 140px;
+  width: 120px;
+  height: 68px;
   flex: 0 0 auto;
   scroll-snap-align: start;
+  background: white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .thumb-item:hover {
-  border-color: #94a3b8;
-  transform: translateY(-2px);
+  border-color: #64748b;
+  transform: translateY(-3px) scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .thumb-item.active {
   border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2), 0 4px 12px rgba(59, 130, 246, 0.3);
+  transform: translateY(-2px) scale(1.03);
 }
 
 .slide-placeholder {
@@ -265,16 +378,24 @@ const selectNext = () => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.25s;
+}
+
+.thumb-item:hover .thumb-img {
+  transform: scale(1.05);
 }
 
 .thumb-num {
   position: absolute;
-  bottom: 2px;
-  right: 2px;
-  background: rgba(0,0,0,0.7);
+  bottom: 4px;
+  right: 4px;
+  background: linear-gradient(135deg, rgba(0,0,0,0.8), rgba(0,0,0,0.6));
   color: white;
-  font-size: 0.6rem;
-  padding: 2px 4px;
-  border-radius: 2px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 3px 6px;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 </style>
