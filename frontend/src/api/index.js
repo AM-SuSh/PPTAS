@@ -35,14 +35,15 @@ export const pptApi = {
     },
 
     // 新增方法 - 初始化助教
-    setTutorContext(pageId, title, content, concepts) {
-        return service.post('/tutor/set-context', {
-            page_id: pageId,
-            title,
-            content,
-            raw_points: concepts
-        })
-    },
+    setTutorContext(pageId, title, content, keyConcepts, analysis = '') {
+    return service.post('/tutor/set-context', {
+        page_id: pageId,
+        title: title,
+        content: content,
+        key_concepts: keyConcepts || [],
+        analysis: analysis || ''
+    })
+},
 
     // 新增方法 - AI 对话
     chat(pageId, message) {

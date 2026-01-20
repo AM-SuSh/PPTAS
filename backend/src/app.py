@@ -29,7 +29,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_ai_tutor_service = None
+_page_analysis_service = None
 
+def get_ai_tutor():
+    """获取 AI 助教服务单例"""
+    global _ai_tutor_service
+    if _ai_tutor_service is None:
+        config = load_config()
+        llm_config = LLMConfig(
+            api_key=config["llm"]["api_key"],
+            base_url=config["llm"]["base_url"],
+            model=config["llm"]["model"]
+        )
+        _ai_tutor_service = AITutorService(llm_config)
+    return _ai_tutor_service
+
+def get_page_analysis():
+    """获取页面分析服务单例"""
+    global _page_analysis_service
+    if _page_analysis_service is None:
+        config = load_config()
+        llm_config = LLMConfig(
+            api_key=config["llm"]["api_key"],
+            base_url=config["llm"]["base_url"],
+            model=config["llm"]["model"]
+        )
+        _page_analysis_service = PageDeepAnalysisService(llm_config)
+    return _page_analysis_service
 # ==================== 请求/响应模型 ====================
 class ChatRequest(BaseModel):
     """聊天请求"""
@@ -50,6 +77,8 @@ class PageAnalysisRequest(BaseModel):
     title: str
     content: str
     raw_points: Optional[list] = None
+    key_concepts: Optional[list] = None  # 关键概念列表
+    analysis: Optional[str] = None  # 深度分析内容
 
 
 class ReferenceSearchRequest(BaseModel):
@@ -312,71 +341,112 @@ async def analyze_page(
 @app.post("/api/v1/chat")
 async def chat(
     request: ChatRequest,
-    service: AITutorService = Depends(get_ai_tutor_service),
 ):
-    """AI 助教对话端点
-    
-    Args:
-        request: 聊天请求
-        service: AI 助教服务
-    
-    Returns:
-        聊天响应
-    """
+    """与 AI 助教对话"""
     try:
-        # 获取或初始化对话上下文
-        response = service.chat(request.page_id, request.message)
+        if not request.message or not request.message.strip():
+            raise HTTPException(status_code=400, detail="消息不能为空")
         
-        return ChatResponse(
-            page_id=request.page_id,
-            response=response,
-            timestamp=""
-        )
+        # 获取服务实例
+        service = get_ai_tutor()
+        
+        print(f"📝 聊天请求: page_id={request.page_id}, 已有上下文: {list(service.page_context.keys())}")
+        
+        # 检查是否已设置上下文
+        if request.page_id not in service.page_context:
+            print(f"⚠️ 页面 {request.page_id} 未在上下文中，当前已知页面: {list(service.page_context.keys())}")
+            return {
+                "status": "error",
+                "response": f"⚠️ 页面内容未加载。请确保：\n1. 已切换到聊天标签页\n2. 已加载 PPT 内容\n3. 页面已完全初始化（page_id={request.page_id}）\n\n如果问题持续存在，请：\n• 刷新页面\n• 重新上传 PPT\n• 查看后端日志",
+                "need_context": True
+            }
+        
+        # 调用助教服务
+        response_text = service.chat(request.page_id, request.message)
+        
+        from datetime import datetime
+        return {
+            "status": "ok",
+            "response": response_text,
+            "page_id": request.page_id,
+            "timestamp": datetime.now().isoformat()
+        }
+    
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
-
+        print(f"❌ 聊天失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return {
+            "status": "error",
+            "response": f"❌ 抱歉,AI 暂时无法回答。错误: {str(e)}",
+            "error": str(e)
+        }
 
 @app.post("/api/v1/tutor/set-context")
 async def set_tutor_context(
     request: PageAnalysisRequest,
-    service: AITutorService = Depends(get_ai_tutor_service),
 ):
-    """设置 AI 助教的页面上下文
-    
-    Args:
-        request: 上下文请求
-        service: AI 助教服务
-    
-    Returns:
-        确认消息和欢迎语
-    """
+    """设置 AI 助教的页面上下文"""
     try:
-        # 这里需要从分析结果中获取深度分析内容
-        # 为简化，暂时使用原始内容
+        # 获取服务实例
+        service = get_ai_tutor()
+        
+        # 组装内容文本
+        content_text = request.content
+        if not content_text and request.raw_points:
+            content_text = "\n".join([
+                point.get('text', '') 
+                for point in request.raw_points 
+                if point.get('type') == 'text'
+            ])
+        
+        # 确保 page_id 是整数
+        page_id = int(request.page_id)
+        
+        print(f"🔧 设置上下文: page_id={page_id}, title={request.title}")
+        
+        # 设置页面上下文
         service.set_page_context(
-            page_id=request.page_id,
+            page_id=page_id,
             title=request.title,
-            content=request.content,
-            key_concepts=request.raw_points or [],
-            analysis="（将由前端调用 analyze-page 获取）"
+            content=content_text,
+            key_concepts=request.key_concepts or request.raw_points or [],  # 优先使用 key_concepts
+            analysis=request.analysis or ""  # 使用 analysis 字段
         )
         
-        greeting = service.get_assistant_greeting(request.page_id)
+        print(f"✅ 上下文已保存，当前已知页面: {list(service.page_context.keys())}")
+        
+        # 返回欢迎语
+        greeting = service.get_assistant_greeting(page_id)
         
         return {
-            "success": True,
-            "page_id": request.page_id,
-            "greeting": greeting
+            "status": "ok",
+            "page_id": page_id,
+            "greeting": greeting,
+            "message": "页面上下文已设置"
         }
+    
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        print(f"❌ 设置上下文失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/v1/tutor/debug/{page_id}")
+async def debug_tutor_context(page_id: int):
+    """调试：查看当前页面上下文"""
+    service = get_ai_tutor()
+    context = service.page_context.get(page_id)
+    conversation = service.get_conversation_history(page_id)
+    
+    return {
+        "page_id": page_id,
+        "has_context": context is not None,
+        "context": context,
+        "conversation_count": len(conversation),
+        "conversation": conversation[-5:] if conversation else []
+    }
 
 @app.post("/api/v1/tutor/conversation")
 async def get_conversation_history(
@@ -687,6 +757,53 @@ async def check_llm_connection():
             "configured": True,
             "error_type": type(e).__name__
         }
+
+class SetContextRequest(BaseModel):
+    """设置页面上下文请求"""
+    page_id: int
+    title: str
+    content: str
+    raw_points: List[dict] = []
+    key_concepts: List[str] = []
+    analysis: str = ""
+
+
+class ChatRequest(BaseModel):
+    """聊天请求"""
+    page_id: int
+    message: str
+
+
+# ===== API 端点 =====
+
+
+@app.get("/api/v1/tutor/conversation")
+async def get_conversation_history(page_id: int):
+    """获取对话历史"""
+    try:
+        history = ai_tutor.get_conversation_history(page_id)
+        return {
+            "status": "ok",
+            "page_id": page_id,
+            "history": history,
+            "count": len(history)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/tutor/conversation/{page_id}")
+async def clear_conversation(page_id: int):
+    """清除对话历史"""
+    try:
+        ai_tutor.clear_conversation(page_id)
+        return {
+            "status": "ok",
+            "page_id": page_id,
+            "message": "对话历史已清除"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

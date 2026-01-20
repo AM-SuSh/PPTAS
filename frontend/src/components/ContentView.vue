@@ -20,6 +20,7 @@ const chatMessages = ref([])
 const userChatInput = ref('')
 const isChatting = ref(false)
 const messagesContainer = ref(null)
+const isInitializingChat = ref(false)
 
 // Search 相关
 const searchQuery = ref('')
@@ -29,6 +30,7 @@ const searchType = ref('all')
 
 // AI 分析控制
 const shouldShowAIAnalysis = ref(false)  // 控制是否显示AI分析卡片
+const isAnalyzingPage = ref(false)  // 追踪AI分析是否正在进行中
 
 // Markdown 转 HTML 工具函数
 const markdownToHtml = (markdown) => {
@@ -47,12 +49,7 @@ const markdownToHtml = (markdown) => {
     .replace(/\n/g, '<br>')
 }
 
-// 初始化聊天
-onMounted(() => {
-  if (props.slide?.page_id) {
-    initChat()
-  }
-})
+
 
 // 监听 slide 变化，重置 AI 分析状态
 watch(() => props.slide?.page_num, () => {
@@ -60,19 +57,59 @@ watch(() => props.slide?.page_num, () => {
 })
 
 const initChat = async () => {
-  if (!props.slide?.title) return
+  if (!props.slide?.page_num) {
+    console.warn('⚠️ 无法初始化聊天：页面信息缺失')
+    return
+  }
   
-  chatMessages.value = [
-    {
-      role: 'assistant',
-      content: `你好！我是基于当前 PPT 的助教。关于 "${props.slide.title}" 你有什么疑问吗？`,
-      timestamp: new Date().toISOString()
-    }
-  ]
+  console.log('🔄 初始化聊天，页面:', props.slide.page_num, props.slide.title)
+  
+  try {
+    isInitializingChat.value = true
+    
+    // 1. 设置助教上下文
+    const contextResponse = await pptApi.setTutorContext(
+      props.slide.page_num,
+      props.slide.title || '',
+      props.slide.raw_content || props.slide.content || '',
+      props.slide.key_concepts || [],
+      props.slide.deep_analysis || ''
+    )
+    
+    console.log('✅ 上下文设置成功:', contextResponse.data)
+    
+    // 2. 初始化消息（使用后端返回的欢迎语）
+    const greeting = contextResponse.data?.greeting || 
+                     contextResponse.data?.data?.greeting ||
+                     `你好!我是基于当前 PPT 的助教。关于 "${props.slide.title}" 你有什么疑问吗？`
+    
+    chatMessages.value = [
+      {
+        role: 'assistant',
+        content: greeting,
+        timestamp: new Date().toISOString()
+      }
+    ]
+    
+    console.log('✅ 聊天初始化完成')
+    
+  } catch (error) {
+    console.error('❌ 初始化聊天失败:', error)
+    
+    chatMessages.value = [
+      {
+        role: 'assistant',
+        content: `⚠️ 初始化失败: ${error.message || '未知错误'}。请检查后端连接。`,
+        timestamp: new Date().toISOString()
+      }
+    ]
+  } finally {
+    isInitializingChat.value = false
+  }
 }
 
 // 触发 AI 分析
-const triggerAIAnalysis = async () => {
+const triggerAIAnalysis = () => {
   if (!props.slide?.page_num) return
   
   shouldShowAIAnalysis.value = true
@@ -82,20 +119,20 @@ const triggerAIAnalysis = async () => {
     return
   }
   
-  // 如果没有分析结果，触发分析
-  // 向父组件发送事件进行分析
+  // 如果没有分析结果，异步触发分析（不阻塞UI）
   if (!props.slide?.deep_analysis) {
     console.log('🤖 用户触发了 AI 分析，开始分析页面 ' + props.slide.page_num)
-    // 这里调用后端 API 进行分析
-    await analyzePageWithAI()
+    // 不使用 await，让分析在后台进行，不阻塞 UI
+    analyzePageWithAI()
   }
 }
 
-// AI 分析函数
+// AI 分析函数（后台异步执行，不阻塞UI）
 const analyzePageWithAI = async () => {
   const pageId = props.slide.page_num || 1
   
   try {
+    isAnalyzingPage.value = true
     console.log('📤 发送 AI 分析请求...')
     const response = await pptApi.analyzePage(
       pageId,
@@ -120,49 +157,11 @@ const analyzePageWithAI = async () => {
   } catch (error) {
     console.error('❌ AI 分析失败:', error)
     props.slide.deep_analysis = `❌ 分析失败: ${error.message || '未知错误'}`
+  } finally {
+    isAnalyzingPage.value = false
   }
 }
 
-// 发送聊天消息
-const sendChatMessage = async () => {
-  if (!userChatInput.value.trim() || !props.slide) return
-  
-  const pageId = props.slide.page_num || 1
-  const message = userChatInput.value
-  
-  chatMessages.value.push({
-    role: 'user',
-    content: message,
-    timestamp: new Date().toISOString()
-  })
-  
-  userChatInput.value = ''
-  isChatting.value = true
-  
-  try {
-    const response = await pptApi.chat(pageId, message)
-    
-    chatMessages.value.push({
-      role: 'assistant',
-      content: response.data.response || response.data.data?.response || 'AI 助教无法回答',
-      timestamp: new Date().toISOString()
-    })
-    
-    await nextTick()
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-    }
-  } catch (error) {
-    console.error('聊天失败:', error)
-    chatMessages.value.push({
-      role: 'assistant',
-      content: '❌ 对不起，AI 暂时无法回答。请检查网络连接或稍后重试。',
-      timestamp: new Date().toISOString()
-    })
-  } finally {
-    isChatting.value = false
-  }
-}
 
 const handleChatKeydown = (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -228,11 +227,15 @@ const checkLLMConnection = async () => {
     const response = await pptApi.checkLLMConnection()
     const data = response.data
     
+    console.log('📊 LLM Health Check Response:', data)
+    
+    // 后端返回 status === 'ok' 表示成功
     if (data.status === 'ok') {
       alert('✅ LLM 连接正常！\n\n模型: ' + data.model + '\n示例回复: ' + data.response_preview)
-    } else {
+    } else if (data.status === 'error') {
+      // 后端明确返回了错误状态
       let errorMsg = '❌ LLM 连接失败\n\n'
-      errorMsg += '消息: ' + data.message + '\n'
+      errorMsg += '消息: ' + (data.message || '未知错误') + '\n'
       if (data.detail) errorMsg += '详情: ' + data.detail + '\n'
       errorMsg += '\n解决方案：\n'
       
@@ -244,34 +247,208 @@ const checkLLMConnection = async () => {
         errorMsg += '1. 检查 API Key 是否有效\n'
         errorMsg += '2. 确认 API 配额未超限\n'
         errorMsg += '3. 检查选择的模型是否可用\n'
-        errorMsg += '4. 尝试更换模型测试'
+        errorMsg += '4. 尝试更换模型测试\n'
+        errorMsg += '5. 查看后端日志获取详细错误信息'
       }
       
       alert(errorMsg)
+    } else {
+      // 意外的状态码
+      alert('❌ LLM 检查失败\n\n意外状态: ' + data.status + '\n响应: ' + JSON.stringify(data))
     }
   } catch (error) {
     let errorMsg = '❌ LLM 检查失败\n\n'
     
     if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-      errorMsg += '原因: 请求超时（30秒）\n\n'
+      // 准确的超时时间：10秒（来自 api/index.js 的 health/llm 端点配置）
+      errorMsg += '原因: 请求超时（10秒）\n\n'
       errorMsg += '这通常表示：\n'
-      errorMsg += '1. LLM 服务响应缓慢\n'
-      errorMsg += '2. API Key 无效导致被拒\n'
-      errorMsg += '3. 网络连接不稳定\n\n'
+      errorMsg += '1. LLM 服务响应缓慢或无响应\n'
+      errorMsg += '2. API Key 无效或过期\n'
+      errorMsg += '3. 网络连接不稳定\n'
+      errorMsg += '4. 后端服务未启动\n\n'
       errorMsg += '建议：\n'
+      errorMsg += '• 检查后端服务是否运行: uvicorn main:app\n'
       errorMsg += '• 检查 config.json 中的 API Key\n'
       errorMsg += '• 确认 base_url 是否正确\n'
-      errorMsg += '• 检查网络连接\n'
-      errorMsg += '• 查看后端日志: echo $LAST_COMMAND (backend 终端)'
-    } else {
-      errorMsg += '原因: ' + error.message + '\n\n'
+      errorMsg += '• 查看后端日志确认具体错误'
+    } else if (error.response) {
+      // 后端返回了错误响应（如 500、503）
+      errorMsg += '原因: 后端返回错误 (HTTP ' + error.response.status + ')\n\n'
+      if (error.response.data?.detail) {
+        errorMsg += '详情: ' + error.response.data.detail
+      } else if (error.response.data?.error) {
+        errorMsg += '错误: ' + error.response.data.error
+      } else {
+        errorMsg += '请检查后端日志'
+      }
+    } else if (error.request && !error.response) {
+      // 发送了请求但没有收到响应
+      errorMsg += '原因: 无法连接到后端\n\n'
       errorMsg += '请检查：\n'
       errorMsg += '1. 后端服务是否运行\n'
-      errorMsg += '2. 网络连接是否正常'
+      errorMsg += '2. 服务地址是否正确 (http://localhost:8000)\n'
+      errorMsg += '3. 网络连接是否正常\n'
+      errorMsg += '4. 防火墙是否阻止连接'
+    } else {
+      // 其他错误
+      errorMsg += '原因: ' + error.message + '\n\n'
+      errorMsg += '请检查：\n'
+      errorMsg += '1. 网络连接\n'
+      errorMsg += '2. 浏览器控制台错误日志'
     }
     
+    console.error('❌ LLM Health Check Error:', error)
     alert(errorMsg)
   }
+}
+
+
+// 监听 slide 变化，重新初始化聊天
+watch(() => props.slide?.page_num, (newPageNum, oldPageNum) => {
+  if (newPageNum !== oldPageNum && newPageNum) {
+    initChat()
+  }
+})
+
+// 监听 activeTool 切换到 chat 时自动滚动到底部
+watch(() => props.activeTool, (newTool) => {
+  if (newTool === 'chat') {
+    nextTick(() => {
+      if (messagesContainer.value) {
+        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      }
+    })
+  }
+})
+
+
+// 发送聊天消息 - 添加更多错误处理
+const sendChatMessage = async () => {
+  if (!userChatInput.value.trim() || !props.slide) return
+  
+  const pageId = props.slide.page_num || 1
+  const message = userChatInput.value
+  
+  // 添加用户消息
+  chatMessages.value.push({
+    role: 'user',
+    content: message,
+    timestamp: new Date().toISOString()
+  })
+  
+  userChatInput.value = ''
+  isChatting.value = true
+  
+  // 滚动到底部
+  await nextTick()
+  if (messagesContainer.value) {
+    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+  }
+  
+  try {
+    const response = await pptApi.chat(pageId, message)
+    console.log('💬 AI 回复:', response.data)
+    
+    const aiResponse = response.data.response || 
+                       response.data.data?.response || 
+                       'AI 助教暂时无法回答'
+    
+    // 检查是否需要重新初始化上下文
+    if (response.data.need_context || response.data.status === 'error') {
+      console.warn('⚠️ 需要重新初始化上下文或出现错误，尝试重新初始化...')
+      // 移除用户消息和AI错误消息，重新初始化
+      chatMessages.value = chatMessages.value.slice(0, -1)
+      await initChat()
+      // 等待初始化完成后重新发送消息
+      await new Promise(resolve => setTimeout(resolve, 500))
+      userChatInput.value = message
+      await sendChatMessage()
+      return
+    }
+    
+    chatMessages.value.push({
+      role: 'assistant',
+      content: aiResponse,
+      timestamp: new Date().toISOString()
+    })
+    
+    // 滚动到底部
+    await nextTick()
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    }
+    
+  } catch (error) {
+    console.error('❌ 聊天失败:', error)
+    
+    let errorMsg = '❌ 对不起，AI 暂时无法回答。'
+    
+    if (error.response?.status === 500) {
+      errorMsg += '后端服务错误，请查看后端日志。'
+    } else if (error.code === 'ECONNABORTED') {
+      errorMsg += '请求超时，请稍后重试。'
+    } else if (!error.response) {
+      errorMsg += '无法连接到后端服务。'
+    } else {
+      errorMsg += `错误: ${error.message}`
+    }
+    
+    chatMessages.value.push({
+      role: 'assistant',
+      content: errorMsg,
+      timestamp: new Date().toISOString()
+    })
+  } finally {
+    isChatting.value = false
+  }
+}
+
+// 监听 slide 变化，重新初始化聊天
+watch(() => props.slide?.page_num, async (newPageNum, oldPageNum) => {
+  if (newPageNum !== oldPageNum && newPageNum) {
+    console.log('📄 页面切换:', oldPageNum, '->', newPageNum)
+    
+    // 如果当前在聊天标签，立即初始化
+    if (props.activeTool === 'chat') {
+      await initChat()
+    }
+  }
+})
+
+// 监听切换到聊天标签
+watch(() => props.activeTool, async (newTool, oldTool) => {
+  if (newTool === 'chat' && oldTool !== 'chat') {
+    console.log('💬 切换到聊天标签')
+    
+    // 如果还没有消息或消息是空的，初始化
+    if (!chatMessages.value.length) {
+      await initChat()
+    }
+    
+    // 滚动到底部
+    await nextTick()
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    }
+  }
+})
+
+// 组件挂载时的初始化
+onMounted(async () => {
+  if (props.slide?.page_num && props.activeTool === 'chat') {
+    await initChat()
+  }
+})
+
+// 格式化时间戳
+const formatTime = (timestamp) => {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  return date.toLocaleTimeString('zh-CN', { 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  })
 }
 </script>
 
@@ -330,13 +507,17 @@ const checkLLMConnection = async () => {
           <button 
             v-if="!shouldShowAIAnalysis"
             @click="triggerAIAnalysis"
+            :disabled="isAnalyzingPage"
             class="btn-analyze-page"
           >
-            🤖 使用 AI 深度分析此页面
+            <span v-if="isAnalyzingPage" class="analyzing-spinner">⏳</span>
+            <span v-else>🤖</span>
+            {{ isAnalyzingPage ? '正在分析中...' : '使用 AI 深度分析此页面' }}
           </button>
           <button 
             v-else
             @click="shouldShowAIAnalysis = false"
+            :disabled="isAnalyzingPage"
             class="btn-analyze-page btn-collapse"
           >
             ⏷ 收起 AI 分析
@@ -650,17 +831,55 @@ const checkLLMConnection = async () => {
     </div>
 
     <div v-if="activeTool === 'chat'" class="view-section chat-view">
-      <div class="chat-container">
-        <div class="message ai">
-          <span class="avatar">🤖</span>
-          <div class="bubble">你好！我是基于当前 PPT 的助教。关于 "{{ slide?.title }}" 你有什么疑问吗？</div>
-        </div>
-      </div>
-      <div class="chat-input-area">
-        <input type="text" placeholder="向 AI 提问..." class="chat-input" />
-        <button class="send-btn">发送</button>
+  <div class="chat-header">
+    <h3 class="chat-title">💬 AI 助教对话</h3>
+    <p class="chat-subtitle">关于 "{{ slide?.title }}" 的智能问答</p>
+  </div>
+  
+  <div class="chat-container" ref="messagesContainer">
+    <div 
+      v-for="(msg, idx) in chatMessages" 
+      :key="idx" 
+      class="message"
+      :class="msg.role"
+    >
+      <span class="avatar">{{ msg.role === 'assistant' ? '🤖' : '👤' }}</span>
+      <div class="bubble">
+        {{ msg.content }}
+        <span class="timestamp">{{ formatTime(msg.timestamp) }}</span>
       </div>
     </div>
+    
+    <!-- 正在输入提示 -->
+    <div v-if="isChatting" class="message ai typing-indicator">
+      <span class="avatar">🤖</span>
+      <div class="bubble">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+      </div>
+    </div>
+  </div>
+  
+  <div class="chat-input-area">
+    <input 
+      v-model="userChatInput"
+      @keydown="handleChatKeydown"
+      :disabled="isChatting || !slide"
+      type="text" 
+      placeholder="向 AI 提问..." 
+      class="chat-input" 
+    />
+    <button 
+      @click="sendChatMessage"
+      :disabled="!userChatInput.trim() || isChatting || !slide"
+      class="send-btn"
+    >
+      {{ isChatting ? '发送中...' : '发送' }}
+    </button>
+  </div>
+</div>
+
   </div>
 </template>
 
@@ -1717,15 +1936,21 @@ const checkLLMConnection = async () => {
   gap: 0.5rem;
 }
 
-.btn-analyze-page:hover {
+.btn-analyze-page:hover:not(:disabled) {
   background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
   box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
   transform: translateY(-2px);
 }
 
-.btn-analyze-page:active {
+.btn-analyze-page:active:not(:disabled) {
   transform: translateY(0);
   box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.btn-analyze-page:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
 }
 
 .btn-analyze-page.btn-collapse {
@@ -1733,8 +1958,215 @@ const checkLLMConnection = async () => {
   box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
 }
 
-.btn-analyze-page.btn-collapse:hover {
+.btn-analyze-page.btn-collapse:hover:not(:disabled) {
   background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
   box-shadow: 0 6px 16px rgba(107, 114, 128, 0.4);
+}
+
+/* 加载动画 */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.analyzing-spinner {
+  display: inline-block;
+  animation: spin 1.5s linear infinite;
+}
+.chat-view {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 200px);
+  min-height: 500px;
+}
+
+.chat-header {
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #f1f5f9;
+  margin-bottom: 1rem;
+}
+
+.chat-title {
+  font-size: 1.5rem;
+  color: #1e293b;
+  margin: 0 0 0.5rem 0;
+}
+
+.chat-subtitle {
+  font-size: 0.9rem;
+  color: #64748b;
+  margin: 0;
+}
+
+.chat-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  background: #f8fafc;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.message {
+  display: flex;
+  gap: 0.75rem;
+  animation: slideIn 0.3s ease;
+}
+
+.message.user {
+  flex-direction: row-reverse;
+}
+
+.message.ai {
+  flex-direction: row;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.message.user .avatar {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+}
+
+.bubble {
+  background: white;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  max-width: 70%;
+  line-height: 1.6;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  position: relative;
+}
+
+.message.ai .bubble {
+  border-top-left-radius: 2px;
+  background: #f1f5f9;
+}
+
+.message.user .bubble {
+  border-top-right-radius: 2px;
+  background: #3b82f6;
+  color: white;
+}
+
+.timestamp {
+  display: block;
+  font-size: 0.7rem;
+  color: #94a3b8;
+  margin-top: 0.25rem;
+}
+
+.message.user .timestamp {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.typing-indicator .bubble {
+  display: flex;
+  gap: 0.3rem;
+  padding: 1rem;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  animation: typing 1.4s infinite;
+}
+
+.dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.chat-input-area {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: white;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.chat-input {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  outline: none;
+  font-size: 0.95rem;
+  transition: border-color 0.2s;
+}
+
+.chat-input:focus {
+  border-color: #3b82f6;
+}
+
+.chat-input:disabled {
+  background: #f1f5f9;
+  cursor: not-allowed;
+}
+
+.send-btn {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 20px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.send-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes typing {
+  0%, 60%, 100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-10px);
+  }
 }
 </style>
