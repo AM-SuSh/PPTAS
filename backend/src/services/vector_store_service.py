@@ -52,8 +52,8 @@ class VectorStoreService:
                 base_url=llm_config.base_url
             )
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
+            chunk_size=400,
+            chunk_overlap=50,
             length_function=len,
         )
         self.vectorstore: Optional[Chroma] = None
