@@ -26,6 +26,7 @@ const searchType = ref('all')
 
 // AI 分析控制
 const shouldShowAIAnalysis = ref(false)  // 控制是否显示AI分析卡片
+const isAnalyzingPage = ref(false)  // 追踪AI分析是否正在进行中
 
 // Markdown 转 HTML 工具函数
 const markdownToHtml = (markdown) => {
@@ -69,7 +70,7 @@ const initChat = async () => {
 }
 
 // 触发 AI 分析
-const triggerAIAnalysis = async () => {
+const triggerAIAnalysis = () => {
   if (!props.slide?.page_num) return
   
   shouldShowAIAnalysis.value = true
@@ -79,20 +80,20 @@ const triggerAIAnalysis = async () => {
     return
   }
   
-  // 如果没有分析结果，触发分析
-  // 向父组件发送事件进行分析
+  // 如果没有分析结果，异步触发分析（不阻塞UI）
   if (!props.slide?.deep_analysis) {
     console.log('🤖 用户触发了 AI 分析，开始分析页面 ' + props.slide.page_num)
-    // 这里调用后端 API 进行分析
-    await analyzePageWithAI()
+    // 不使用 await，让分析在后台进行，不阻塞 UI
+    analyzePageWithAI()
   }
 }
 
-// AI 分析函数
+// AI 分析函数（后台异步执行，不阻塞UI）
 const analyzePageWithAI = async () => {
   const pageId = props.slide.page_num || 1
   
   try {
+    isAnalyzingPage.value = true
     console.log('📤 发送 AI 分析请求...')
     const response = await pptApi.analyzePage(
       pageId,
@@ -117,6 +118,8 @@ const analyzePageWithAI = async () => {
   } catch (error) {
     console.error('❌ AI 分析失败:', error)
     props.slide.deep_analysis = `❌ 分析失败: ${error.message || '未知错误'}`
+  } finally {
+    isAnalyzingPage.value = false
   }
 }
 
@@ -225,11 +228,15 @@ const checkLLMConnection = async () => {
     const response = await pptApi.checkLLMConnection()
     const data = response.data
     
+    console.log('📊 LLM Health Check Response:', data)
+    
+    // 后端返回 status === 'ok' 表示成功
     if (data.status === 'ok') {
       alert('✅ LLM 连接正常！\n\n模型: ' + data.model + '\n示例回复: ' + data.response_preview)
-    } else {
+    } else if (data.status === 'error') {
+      // 后端明确返回了错误状态
       let errorMsg = '❌ LLM 连接失败\n\n'
-      errorMsg += '消息: ' + data.message + '\n'
+      errorMsg += '消息: ' + (data.message || '未知错误') + '\n'
       if (data.detail) errorMsg += '详情: ' + data.detail + '\n'
       errorMsg += '\n解决方案：\n'
       
@@ -241,32 +248,58 @@ const checkLLMConnection = async () => {
         errorMsg += '1. 检查 API Key 是否有效\n'
         errorMsg += '2. 确认 API 配额未超限\n'
         errorMsg += '3. 检查选择的模型是否可用\n'
-        errorMsg += '4. 尝试更换模型测试'
+        errorMsg += '4. 尝试更换模型测试\n'
+        errorMsg += '5. 查看后端日志获取详细错误信息'
       }
       
       alert(errorMsg)
+    } else {
+      // 意外的状态码
+      alert('❌ LLM 检查失败\n\n意外状态: ' + data.status + '\n响应: ' + JSON.stringify(data))
     }
   } catch (error) {
     let errorMsg = '❌ LLM 检查失败\n\n'
     
     if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-      errorMsg += '原因: 请求超时（30秒）\n\n'
+      // 准确的超时时间：10秒（来自 api/index.js 的 health/llm 端点配置）
+      errorMsg += '原因: 请求超时（10秒）\n\n'
       errorMsg += '这通常表示：\n'
-      errorMsg += '1. LLM 服务响应缓慢\n'
-      errorMsg += '2. API Key 无效导致被拒\n'
-      errorMsg += '3. 网络连接不稳定\n\n'
+      errorMsg += '1. LLM 服务响应缓慢或无响应\n'
+      errorMsg += '2. API Key 无效或过期\n'
+      errorMsg += '3. 网络连接不稳定\n'
+      errorMsg += '4. 后端服务未启动\n\n'
       errorMsg += '建议：\n'
+      errorMsg += '• 检查后端服务是否运行: uvicorn main:app\n'
       errorMsg += '• 检查 config.json 中的 API Key\n'
       errorMsg += '• 确认 base_url 是否正确\n'
-      errorMsg += '• 检查网络连接\n'
-      errorMsg += '• 查看后端日志: echo $LAST_COMMAND (backend 终端)'
-    } else {
-      errorMsg += '原因: ' + error.message + '\n\n'
+      errorMsg += '• 查看后端日志确认具体错误'
+    } else if (error.response) {
+      // 后端返回了错误响应（如 500、503）
+      errorMsg += '原因: 后端返回错误 (HTTP ' + error.response.status + ')\n\n'
+      if (error.response.data?.detail) {
+        errorMsg += '详情: ' + error.response.data.detail
+      } else if (error.response.data?.error) {
+        errorMsg += '错误: ' + error.response.data.error
+      } else {
+        errorMsg += '请检查后端日志'
+      }
+    } else if (error.request && !error.response) {
+      // 发送了请求但没有收到响应
+      errorMsg += '原因: 无法连接到后端\n\n'
       errorMsg += '请检查：\n'
       errorMsg += '1. 后端服务是否运行\n'
-      errorMsg += '2. 网络连接是否正常'
+      errorMsg += '2. 服务地址是否正确 (http://localhost:8000)\n'
+      errorMsg += '3. 网络连接是否正常\n'
+      errorMsg += '4. 防火墙是否阻止连接'
+    } else {
+      // 其他错误
+      errorMsg += '原因: ' + error.message + '\n\n'
+      errorMsg += '请检查：\n'
+      errorMsg += '1. 网络连接\n'
+      errorMsg += '2. 浏览器控制台错误日志'
     }
     
+    console.error('❌ LLM Health Check Error:', error)
     alert(errorMsg)
   }
 }
@@ -327,13 +360,17 @@ const checkLLMConnection = async () => {
           <button 
             v-if="!shouldShowAIAnalysis"
             @click="triggerAIAnalysis"
+            :disabled="isAnalyzingPage"
             class="btn-analyze-page"
           >
-            🤖 使用 AI 深度分析此页面
+            <span v-if="isAnalyzingPage" class="analyzing-spinner">⏳</span>
+            <span v-else>🤖</span>
+            {{ isAnalyzingPage ? '正在分析中...' : '使用 AI 深度分析此页面' }}
           </button>
           <button 
             v-else
             @click="shouldShowAIAnalysis = false"
+            :disabled="isAnalyzingPage"
             class="btn-analyze-page btn-collapse"
           >
             ⏷ 收起 AI 分析
@@ -1710,15 +1747,21 @@ const checkLLMConnection = async () => {
   gap: 0.5rem;
 }
 
-.btn-analyze-page:hover {
+.btn-analyze-page:hover:not(:disabled) {
   background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
   box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
   transform: translateY(-2px);
 }
 
-.btn-analyze-page:active {
+.btn-analyze-page:active:not(:disabled) {
   transform: translateY(0);
   box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.btn-analyze-page:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
 }
 
 .btn-analyze-page.btn-collapse {
@@ -1726,8 +1769,23 @@ const checkLLMConnection = async () => {
   box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
 }
 
-.btn-analyze-page.btn-collapse:hover {
+.btn-analyze-page.btn-collapse:hover:not(:disabled) {
   background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
   box-shadow: 0 6px 16px rgba(107, 114, 128, 0.4);
+}
+
+/* 加载动画 */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.analyzing-spinner {
+  display: inline-block;
+  animation: spin 1.5s linear infinite;
 }
 </style>
