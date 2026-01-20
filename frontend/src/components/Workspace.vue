@@ -40,13 +40,20 @@ const analyzeCurrentPage = async () => {
   if (analysisCache.value[pageId]) {
     const cached = analysisCache.value[pageId]
     Object.assign(currentSlide.value, cached)
+    console.log('使用缓存数据:', cached)
     return
   }
 
   isAnalyzing.value = true
+  console.log('🔄 开始分析页面:', pageId, '标题:', currentSlide.value.title)
 
   try {
     // 1. 分析页面
+    console.log('📤 发送分析请求到后端...')
+    console.log('   - 页面ID:', pageId)
+    console.log('   - 标题:', currentSlide.value.title)
+    console.log('   - 内容长度:', (currentSlide.value.raw_content || '').length, '字符')
+    
     const analysisRes = await pptApi.analyzePage(
       pageId,
       currentSlide.value.title || '',
@@ -54,17 +61,37 @@ const analyzeCurrentPage = async () => {
       currentSlide.value.raw_points || []
     )
 
-    const analysisData = analysisRes.data.data || analysisRes.data
+    console.log('📥 后端响应状态:', analysisRes.status)
+    console.log('📥 后端响应内容:', analysisRes.data)
+    
+    // 处理响应数据
+    let analysisData = null
+    if (analysisRes.data && analysisRes.data.data) {
+      analysisData = analysisRes.data.data
+    } else if (analysisRes.data) {
+      analysisData = analysisRes.data
+    }
+    
+    if (!analysisData) {
+      throw new Error('后端响应格式错误：无法提取分析数据')
+    }
+    
+    console.log('✅ 提取的分析数据:', analysisData)
+    console.log('   - deep_analysis 长度:', (analysisData.deep_analysis || '').length)
+    console.log('   - key_concepts:', analysisData.key_concepts)
+    console.log('   - learning_objectives:', analysisData.learning_objectives)
 
     // 2. 更新页面数据
     const enrichedSlide = {
       ...currentSlide.value,
-      deep_analysis: analysisData.deep_analysis,
-      deep_analysis_html: markdownToHtml(analysisData.deep_analysis),
+      deep_analysis: analysisData.deep_analysis || '❌ 未获取到 AI 分析内容',
+      deep_analysis_html: markdownToHtml(analysisData.deep_analysis || '❌ 未获取到 AI 分析内容'),
       key_concepts: analysisData.key_concepts || [],
       learning_objectives: analysisData.learning_objectives || [],
       references: analysisData.references || []
     }
+
+    console.log('📝 富化后的页面数据:', enrichedSlide)
 
     // 3. 缓存结果
     analysisCache.value[pageId] = enrichedSlide
@@ -72,18 +99,24 @@ const analyzeCurrentPage = async () => {
 
     // 4. 初始化助教
     try {
+      console.log('🤖 初始化 AI 助教...')
       await pptApi.setTutorContext(
         pageId,
         currentSlide.value.title || '',
         currentSlide.value.raw_content || '',
         analysisData.key_concepts || []
       )
+      console.log('✅ AI 助教初始化成功')
     } catch (err) {
-      console.warn('初始化助教失败:', err)
+      console.warn('⚠️ 初始化助教失败:', err)
     }
   } catch (error) {
-    console.error('分析失败:', error)
-    // 保持当前显示，不中断流程
+    console.error('❌ 分析失败:', error)
+    // 显示错误信息
+    if (currentSlide.value) {
+      currentSlide.value.deep_analysis = `❌ 分析失败: ${error.message || '未知错误'}`
+      currentSlide.value.deep_analysis_html = `<div style="color: red; padding: 1rem; background: #ffe0e0; border-radius: 4px;"><strong>分析错误：</strong><br>${error.message || '未知错误'}</div>`
+    }
   } finally {
     isAnalyzing.value = false
   }

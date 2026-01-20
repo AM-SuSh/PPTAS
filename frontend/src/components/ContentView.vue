@@ -1,13 +1,139 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
+import { pptApi } from '../api/index.js'
 
 const props = defineProps({
   slide: Object,
   activeTool: String
 })
 
+// Chat 相关
+const chatMessages = ref([])
+const userChatInput = ref('')
+const isChatting = ref(false)
+const messagesContainer = ref(null)
+
+// Search 相关
 const searchQuery = ref('')
 const isSearching = ref(false)
+const searchResults = ref([])
+const searchType = ref('all')
+
+// Markdown 转 HTML 工具函数
+const markdownToHtml = (markdown) => {
+  if (!markdown) return ''
+  return markdown
+    .replace(/^### (.*)/gm, '<h3>$1</h3>')
+    .replace(/^## (.*)/gm, '<h2>$1</h2>')
+    .replace(/^# (.*)/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/\n- (.*)/gm, '\n<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/^(?!<[^>]*>)/gm, '<p>')
+    .replace(/$/gm, '</p>')
+    .replace(/\n/g, '<br>')
+}
+
+// 初始化聊天
+onMounted(() => {
+  if (props.slide?.page_id) {
+    initChat()
+  }
+})
+
+const initChat = async () => {
+  if (!props.slide?.title) return
+  
+  chatMessages.value = [
+    {
+      role: 'assistant',
+      content: `你好！我是基于当前 PPT 的助教。关于 "${props.slide.title}" 你有什么疑问吗？`,
+      timestamp: new Date().toISOString()
+    }
+  ]
+}
+
+// 发送聊天消息
+const sendChatMessage = async () => {
+  if (!userChatInput.value.trim() || !props.slide) return
+  
+  const pageId = props.slide.page_num || 1
+  const message = userChatInput.value
+  
+  chatMessages.value.push({
+    role: 'user',
+    content: message,
+    timestamp: new Date().toISOString()
+  })
+  
+  userChatInput.value = ''
+  isChatting.value = true
+  
+  try {
+    const response = await pptApi.chat(pageId, message)
+    
+    chatMessages.value.push({
+      role: 'assistant',
+      content: response.data.response || response.data.data?.response || 'AI 助教无法回答',
+      timestamp: new Date().toISOString()
+    })
+    
+    await nextTick()
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    }
+  } catch (error) {
+    console.error('聊天失败:', error)
+    chatMessages.value.push({
+      role: 'assistant',
+      content: '❌ 对不起，AI 暂时无法回答。请检查网络连接或稍后重试。',
+      timestamp: new Date().toISOString()
+    })
+  } finally {
+    isChatting.value = false
+  }
+}
+
+const handleChatKeydown = (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    sendChatMessage()
+  }
+}
+
+// 搜索参考文献
+const performSearch = async () => {
+  if (!searchQuery.value.trim()) return
+  
+  isSearching.value = true
+  
+  try {
+    const response = await pptApi.searchReferences(
+      searchQuery.value,
+      10,
+      searchType.value === 'all' ? null : searchType.value
+    )
+    
+    searchResults.value = response.data.references || response.data.data?.references || []
+  } catch (error) {
+    console.error('搜索失败:', error)
+    searchResults.value = []
+  } finally {
+    isSearching.value = false
+  }
+}
+
+// 学习目标列表
+const learningObjectives = computed(() => {
+  return props.slide?.learning_objectives || []
+})
+
+// 关键概念列表
+const keyConcepts = computed(() => {
+  return props.slide?.key_concepts || []
+})
 
 const handleSearch = () => {
   isSearching.value = true
@@ -67,16 +193,200 @@ const handleSearch = () => {
           </div>
         </div>
 
+        <!-- AI 深度分析 -->
         <div class="card ai-card">
-          <div class="card-title">深度解析</div>
-          <div class="markdown-body" v-html="slide.expanded_html"></div>
+          <h3 class="card-title">🤖 AI 深度解析</h3>
+          
+          <!-- 学习目标 -->
+          <div v-if="learningObjectives.length > 0" class="analysis-section">
+            <h4 class="section-title">📚 学习目标</h4>
+            <ul class="objectives-list">
+              <li v-for="(obj, idx) in learningObjectives" :key="idx" class="objective-item">
+                {{ obj }}
+              </li>
+            </ul>
+          </div>
+
+          <!-- 关键概念 -->
+          <div v-if="keyConcepts.length > 0" class="analysis-section">
+            <h4 class="section-title">🎯 关键概念</h4>
+            <div class="concepts-tags">
+              <span v-for="concept in keyConcepts" :key="concept" class="tag">
+                {{ concept }}
+              </span>
+            </div>
+          </div>
+
+          <!-- 深度分析内容 -->
+          <div class="analysis-section">
+            <h4 class="section-title">🤖 AI 深度分析</h4>
+            
+            <!-- 成功加载的分析内容 -->
+            <div v-if="slide.deep_analysis && !slide.deep_analysis.includes('待补充') && !slide.deep_analysis.includes('❌')" class="markdown-body">
+              <div v-html="slide.deep_analysis_html || markdownToHtml(slide.deep_analysis)"></div>
+            </div>
+
+            <!-- 错误状态 -->
+            <div v-else-if="slide.deep_analysis && slide.deep_analysis.includes('❌')" class="error-box">
+              <strong>⚠️ 分析失败</strong>
+              <p>{{ slide.deep_analysis }}</p>
+              <details class="error-details">
+                <summary>查看错误详情</summary>
+                <pre>{{ slide.deep_analysis }}</pre>
+              </details>
+            </div>
+
+            <!-- 等待分析状态 -->
+            <div v-else class="pending-box">
+              <div class="pending-icon">⏳</div>
+              <p><strong>等待 AI 分析...</strong></p>
+              <p class="hint-text">如果长时间未显示结果，请检查以下调试信息：</p>
+              
+              <!-- 详细调试信息 -->
+              <div class="debug-info-inline">
+                <div class="debug-item">
+                  <strong>📄 当前页面:</strong> 
+                  <span>{{ slide.page_num || '未知' }} - {{ slide.title }}</span>
+                </div>
+                
+                <div class="debug-item">
+                  <strong>📊 数据状态:</strong>
+                  <span v-if="!slide.deep_analysis">❌ deep_analysis 字段为空</span>
+                  <span v-else-if="slide.deep_analysis.includes('待补充')">⏳ 标记为"待补充"</span>
+                  <span v-else>✓ 已有内容 ({{ slide.deep_analysis.length }} 字符)</span>
+                </div>
+                
+                <div class="debug-item">
+                  <strong>🔍 后端连接:</strong>
+                  <span>检查 http://localhost:8000 是否运行</span>
+                </div>
+                
+                <div class="debug-item">
+                  <strong>🔑 API 配置:</strong>
+                  <span>检查 OpenAI API Key 是否正确配置</span>
+                </div>
+                
+                <div class="debug-item">
+                  <strong>📡 网络请求:</strong>
+                  <span>打开浏览器控制台 (F12) → Network 标签</span>
+                </div>
+                
+                <!-- 查看发送到 LLM 的 Prompt -->
+                <details class="prompt-details">
+                  <summary>🎯 查看发送给 LLM 的 Prompt 信息</summary>
+                  <div class="prompt-content">
+                    <div class="prompt-section">
+                      <h5>📝 输入内容 (Input):</h5>
+                      <div class="code-block">
+                        <strong>页面标题:</strong> {{ slide.title }}<br>
+                        <strong>原始要点:</strong>
+                        <pre>{{ JSON.stringify(slide.raw_points, null, 2) }}</pre>
+                        <strong>图像信息:</strong> {{ slide.images?.join(', ') || '无' }}
+                      </div>
+                    </div>
+                    
+                    <div class="prompt-section">
+                      <h5>💬 预期 Prompt 模板:</h5>
+                      <div class="code-block">
+                        <pre>基于以下 PPT 内容，提供深度分析：
+
+标题: {{ slide.title }}
+
+内容要点:
+{{ slide.raw_points?.map(p => p.text).join('\n') }}
+
+图像: {{ slide.images?.join(', ') || '无' }}
+
+请提供:
+1. 详细的概念解释
+2. 实际应用案例
+3. 相关理论背景
+4. 学习建议</pre>
+                      </div>
+                    </div>
+                    
+                    <div class="prompt-section">
+                      <h5>🔧 后端 API 调用信息:</h5>
+                      <div class="code-block">
+                        <strong>API 端点:</strong> POST /api/ppt/analyze<br>
+                        <strong>请求参数:</strong>
+                        <pre>{
+  "page_id": {{ slide.page_num }},
+  "title": "{{ slide.title }}",
+  "content": {{ JSON.stringify(slide.raw_points) }}
+}</pre>
+                      </div>
+                    </div>
+                    
+                    <div class="prompt-section">
+                      <h5>📋 检查清单:</h5>
+                      <ul class="checklist">
+                        <li>✓ 检查后端日志中是否有此页面的处理记录</li>
+                        <li>✓ 确认 LLM API 调用是否成功（查看后端日志）</li>
+                        <li>✓ 检查是否有 rate limit 或配额限制</li>
+                        <li>✓ 验证返回的 JSON 格式是否正确</li>
+                        <li>✓ 查看控制台 Console 标签是否有 JavaScript 错误</li>
+                      </ul>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </div>
+          </div>
+
+          <!-- 原始数据调试（始终显示） -->
+          <div class="debug-section">
+            <details>
+              <summary>📊 完整调试信息 - 原始数据</summary>
+              <div class="debug-content">
+                <div class="debug-item">
+                  <strong>页面 ID:</strong> {{ slide.page_num || '未知' }}
+                </div>
+                <div class="debug-item">
+                  <strong>标题:</strong> {{ slide.title }}
+                </div>
+                <div class="debug-item">
+                  <strong>AI 分析内容长度:</strong> {{ slide.deep_analysis?.length || 0 }} 字符
+                </div>
+                <div class="debug-item">
+                  <strong>关键概念:</strong> {{ slide.key_concepts?.join(', ') || '无' }}
+                </div>
+                <div class="debug-item">
+                  <strong>学习目标:</strong> {{ slide.learning_objectives?.join(', ') || '无' }}
+                </div>
+                <div class="debug-item">
+                  <strong>参考文献数:</strong> {{ slide.references?.length || 0 }}
+                </div>
+                <hr>
+                <strong>原始 AI 分析（Markdown）:</strong>
+                <pre class="raw-content">{{ slide.deep_analysis || '(空)' }}</pre>
+                <hr>
+                <strong>完整 Slide 对象:</strong>
+                <pre class="raw-content">{{ JSON.stringify(slide, null, 2) }}</pre>
+              </div>
+            </details>
+          </div>
         </div>
 
-        <div v-if="slide.references" class="card">
-          <h3 class="card-title">参考文献</h3>
-          <a v-for="ref in slide.references" :key="ref.url" :href="ref.url" class="content-link">
-            {{ ref.title }} <span class="tag">[{{ ref.source }}]</span>
-          </a>
+        <!-- 参考文献 -->
+        <div v-if="slide.references && slide.references.length > 0" class="card references-card">
+          <h3 class="card-title">📚 参考文献</h3>
+          <div class="references-list">
+            <a 
+              v-for="(ref, idx) in slide.references" 
+              :key="idx" 
+              :href="ref.url" 
+              target="_blank"
+              rel="noopener noreferrer"
+              class="reference-link"
+            >
+              <div class="ref-header">
+                <span class="ref-title">{{ ref.title }}</span>
+                <span class="ref-source">{{ ref.source }}</span>
+              </div>
+              <p v-if="ref.snippet" class="ref-snippet">{{ ref.snippet }}</p>
+            </a>
+          </div>
         </div>
       </div>
     </div>
@@ -236,6 +546,195 @@ const handleSearch = () => {
 .markdown-body {
   color: #334155;
   line-height: 1.8;
+  word-wrap: break-word;
+}
+
+.ai-analysis-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.analysis-section {
+  padding: 1rem;
+  background: #f0f7ff;
+  border-left: 4px solid #0066cc;
+  border-radius: 6px;
+}
+
+.section-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #0066cc;
+  margin: 0 0 0.75rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.objectives-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.objective-item {
+  padding: 0.5rem 0.75rem;
+  background: white;
+  border-radius: 4px;
+  border-left: 3px solid #3b82f6;
+  color: #334155;
+  font-size: 0.9rem;
+}
+
+.concepts-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tag {
+  background: #e0e7ff;
+  color: #4338ca;
+  padding: 0.35rem 0.9rem;
+  border-radius: 16px;
+  font-size: 0.85rem;
+  border: 1px solid #c7d2fe;
+  font-weight: 500;
+}
+
+.no-data {
+  text-align: center;
+  padding: 2rem;
+  color: #999;
+  background: #f9fafb;
+  border-radius: 6px;
+}
+
+.no-data p {
+  margin: 0.5rem 0;
+  font-size: 0.95rem;
+}
+
+.hint {
+  color: #666;
+  font-size: 0.85rem;
+  margin-top: 1rem !important;
+}
+
+.hint-list {
+  text-align: left;
+  display: inline-block;
+  color: #666;
+  font-size: 0.85rem;
+  padding: 0.5rem 1.5rem;
+  list-style-type: disc;
+}
+
+.hint-list li {
+  margin: 0.25rem 0;
+}
+
+.debug-info {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+}
+
+.debug-info summary {
+  cursor: pointer;
+  color: #666;
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0.5rem;
+  user-select: none;
+}
+
+.debug-info summary:hover {
+  color: #0066cc;
+}
+
+.debug-info pre {
+  margin: 0.75rem 0 0 0;
+  padding: 0.75rem;
+  background: white;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  overflow-x: auto;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #333;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.references-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.5rem;
+  background: #fff;
+}
+
+.references-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.reference-link {
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f9fafb;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  display: block;
+  cursor: pointer;
+}
+
+.reference-link:hover {
+  border-color: #3b82f6;
+  background: #f0f7ff;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+  transform: translateY(-2px);
+}
+
+.ref-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.ref-title {
+  color: #0066cc;
+  font-weight: 600;
+  font-size: 0.95rem;
+  flex: 1;
+}
+
+.ref-source {
+  background: #e0e7ff;
+  color: #4338ca;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ref-snippet {
+  color: #64748b;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: 0;
 }
 
 .content-link {
@@ -506,5 +1005,307 @@ const handleSearch = () => {
   background-color: #f1f5f9;
   font-weight: 600;
   color: #1e293b;
+}
+
+/* 分析状态样式 */
+.analysis-status {
+  padding: 1.5rem;
+  border-radius: 8px;
+  margin: 1rem 0;
+}
+
+.pending-box {
+  background: #f0f7ff;
+  border: 2px solid #0066cc;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+}
+
+.pending-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.pending-box p {
+  margin: 0.5rem 0;
+  color: #334155;
+}
+
+.pending-box strong {
+  color: #0066cc;
+  font-size: 1.1rem;
+}
+
+.hint-text {
+  font-size: 0.9rem;
+  color: #666;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.hint-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  display: inline-block;
+  color: #555;
+}
+
+.hint-list li {
+  padding: 0.3rem 0;
+  font-size: 0.85rem;
+}
+
+.error-box {
+  background: #ffe0e0;
+  border: 2px solid #dc2626;
+  border-radius: 8px;
+  padding: 1.5rem;
+  color: #991b1b;
+}
+
+.error-box strong {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+.error-box p {
+  margin: 0.5rem 0;
+  line-height: 1.6;
+}
+
+.error-details {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #fecaca;
+}
+
+.error-details summary {
+  cursor: pointer;
+  color: #991b1b;
+  font-weight: 600;
+  user-select: none;
+}
+
+.error-details summary:hover {
+  text-decoration: underline;
+}
+
+.error-details pre {
+  background: #fff5f5;
+  border: 1px solid #fecaca;
+  border-radius: 4px;
+  padding: 1rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  margin-top: 0.5rem;
+  color: #7c2d12;
+}
+
+/* 调试信息样式 */
+.debug-section {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 2px dashed #e2e8f0;
+}
+
+.debug-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #64748b;
+  user-select: none;
+  padding: 0.5rem;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.debug-section summary:hover {
+  background: #f1f5f9;
+}
+
+.debug-content {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 0.85rem;
+}
+
+.debug-item {
+  padding: 0.5rem 0;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.debug-item strong {
+  color: #1e293b;
+  min-width: 100px;
+  display: inline-block;
+}
+
+.raw-content {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 1rem;
+  overflow-x: auto;
+  line-height: 1.6;
+  color: #333;
+}
+
+.markdown-body {
+  color: #334155;
+  line-height: 1.8;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.markdown-body h1 { font-size: 1.8rem; }
+.markdown-body h2 { font-size: 1.4rem; }
+.markdown-body h3 { font-size: 1.1rem; }
+
+.markdown-body p {
+  margin: 0.5rem 0;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+  color: #0066cc;
+}
+
+.markdown-body em {
+  font-style: italic;
+  color: #666;
+}
+
+.markdown-body ul {
+  list-style: disc;
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+.markdown-body li {
+  margin: 0.3rem 0;
+}
+
+.debug-info-inline {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-top: 1rem;
+  text-align: left;
+}
+
+.debug-info-inline .debug-item {
+  padding: 0.5rem;
+  margin: 0.3rem 0;
+  background: white;
+  border-radius: 4px;
+  border-left: 3px solid #3b82f6;
+  font-size: 0.85rem;
+}
+
+.debug-info-inline .debug-item strong {
+  color: #1e293b;
+  margin-right: 0.5rem;
+}
+
+.debug-info-inline .debug-item span {
+  color: #64748b;
+}
+
+.prompt-details {
+  margin-top: 1rem;
+  background: white;
+  border: 2px solid #3b82f6;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.prompt-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #3b82f6;
+  user-select: none;
+  padding: 0.5rem;
+}
+
+.prompt-details summary:hover {
+  background: #f0f7ff;
+  border-radius: 4px;
+}
+
+.prompt-content {
+  margin-top: 1rem;
+}
+
+.prompt-section {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+.prompt-section h5 {
+  margin: 0 0 0.5rem 0;
+  color: #1e293b;
+  font-size: 0.9rem;
+}
+
+.code-block {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.code-block pre {
+  margin: 0.5rem 0 0 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: #334155;
+}
+
+.code-block strong {
+  color: #0066cc;
+}
+
+.checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+
+.checklist li {
+  padding: 0.4rem 0.5rem;
+  margin: 0.3rem 0;
+  background: white;
+  border-radius: 4px;
+  border-left: 3px solid #10b981;
+  font-size: 0.85rem;
+  color: #334155;
 }
 </style>
