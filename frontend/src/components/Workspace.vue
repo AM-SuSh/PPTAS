@@ -188,6 +188,7 @@ const handleToolChange = (toolName) => {
           :mindmap-loading="mindmapLoading"
           :mindmap-error="mindmapError"
           :is-analyzing="isAnalyzing"
+          @select-slide="selectSlide"
         />
         
         <!-- 加载状态浮层 -->

@@ -10,5 +10,6 @@ venv/
 .idea/
 
 # 忽略系统文件
+.sqlite3
 .DS_Store
 Thumbs.db

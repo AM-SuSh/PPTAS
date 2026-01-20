@@ -22,5 +22,11 @@
     "path": "./knowledge_base",
     "chunk_size": 1000,
     "chunk_overlap": 200
+  },
+  "vector_store": {
+    "path": "./ppt_vector_db",
+    "chunk_size": 1000,
+    "chunk_overlap": 200,
+    "embedding_model": "text-embedding-ada-002"
   }
 }

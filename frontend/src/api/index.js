@@ -86,5 +86,31 @@ export const pptApi = {
         return service.get('/health/llm', {
             timeout: 10000  // LLM 检查最多等待 10 秒
         })
+    },
+
+    // 新增方法 - 语义搜索 PPT/PDF 切片
+    searchSemantic(query, topK = 5, fileName = null, fileType = null, minScore = 0.0) {
+        return service.post('/search-semantic', {
+            query,
+            top_k: topK,
+            file_name: fileName,
+            file_type: fileType,
+            min_score: minScore
+        })
+    },
+
+    // 新增方法 - 获取向量数据库统计信息
+    getVectorStoreStats() {
+        return service.get('/vector-store/stats')
+    },
+
+    // 新增方法 - 获取特定文件的所有切片
+    getFileSlides(fileName) {
+        return service.get(`/vector-store/file/${encodeURIComponent(fileName)}`)
+    },
+
+    // 新增方法 - 删除特定文件的所有切片
+    deleteFileSlides(fileName) {
+        return service.delete(`/vector-store/file/${encodeURIComponent(fileName)}`)
     }
 }

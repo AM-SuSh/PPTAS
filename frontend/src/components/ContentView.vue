@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { pptApi } from '../api/index.js'
 import MindmapGraph from './MindmapGraph.vue'
+import SemanticSearch from './SemanticSearch.vue'
 
 const props = defineProps({
   slide: Object,
@@ -11,6 +12,8 @@ const props = defineProps({
   mindmapError: String,
   isAnalyzing: Boolean  // 新增：是否正在分析
 })
+
+const emit = defineEmits(['select-slide'])
 
 // Chat 相关
 const chatMessages = ref([])
@@ -616,29 +619,33 @@ const checkLLMConnection = async () => {
     </div>
 
     <div v-if="activeTool === 'search'" class="view-section search-view">
-      <div class="search-bar">
-        <input v-model="searchQuery" type="text" placeholder="输入关键词搜索学术资源..." class="search-input" />
-        <button @click="handleSearch" class="search-btn">🔍</button>
-      </div>
-
-      <div v-if="!isSearching" class="search-results">
-        <div class="result-item">
-          <div class="result-source">Arxiv</div>
-          <h4 class="result-title">Attention Is All You Need</h4>
-          <p class="result-snippet">The dominant sequence transduction models are based on complex recurrent or convolutional neural networks...</p>
-          <a href="#" class="result-link">Read Paper →</a>
+      <!-- 语义搜索组件 - 搜索已上传的 PPT/PDF 切片 -->
+      <SemanticSearch 
+        :current-file-name="slide?.file_name || null"
+        @select-slide="emit('select-slide', $event)"
+      />
+      
+      <!-- 外部资源搜索（保留作为补充） -->
+      <div class="external-search-section" style="margin-top: 2rem;">
+        <h3 style="margin-bottom: 1rem; color: #1e293b; font-size: 1.1rem;">🌐 外部资源搜索</h3>
+        <div class="search-bar">
+          <input v-model="searchQuery" type="text" placeholder="输入关键词搜索学术资源..." class="search-input" />
+          <button @click="handleSearch" class="search-btn">🔍</button>
         </div>
-        <div class="result-item">
-          <div class="result-source wiki">Wikipedia</div>
-          <h4 class="result-title">Transformer (machine learning model)</h4>
-          <p class="result-snippet">A transformer is a deep learning model that adopts the mechanism of self-attention...</p>
-          <a href="#" class="result-link">Read Article →</a>
-        </div>
-      </div>
 
-      <div v-else class="loading-state">
-        <div class="mini-spinner"></div>
-        <p>正在搜索知识库...</p>
+        <div v-if="!isSearching && searchResults.length > 0" class="search-results">
+          <div v-for="(result, idx) in searchResults" :key="idx" class="result-item">
+            <div :class="['result-source', result.source === 'Wikipedia' ? 'wiki' : '']">{{ result.source }}</div>
+            <h4 class="result-title">{{ result.title }}</h4>
+            <p class="result-snippet">{{ result.snippet }}</p>
+            <a :href="result.url" target="_blank" class="result-link">查看详情 →</a>
+          </div>
+        </div>
+
+        <div v-if="isSearching" class="loading-state">
+          <div class="mini-spinner"></div>
+          <p>正在搜索知识库...</p>
+        </div>
       </div>
     </div>
 

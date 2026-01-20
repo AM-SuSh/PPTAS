@@ -13,6 +13,7 @@ from src.services.ppt_expansion_service import PPTExpansionService
 from src.services.page_analysis_service import PageDeepAnalysisService
 from src.services.ai_tutor_service import AITutorService, ChatMessage
 from src.services.reference_search_service import ReferenceSearchService
+from src.services.vector_store_service import VectorStoreService
 from src.agents.base import LLMConfig
 from pydantic import BaseModel, Field
 
@@ -56,6 +57,15 @@ class ReferenceSearchRequest(BaseModel):
     query: str
     max_results: int = 10
     search_type: Optional[str] = None  # "academic" | "general" | None
+
+
+class SemanticSearchRequest(BaseModel):
+    """语义搜索请求"""
+    query: str
+    top_k: int = 5
+    file_name: Optional[str] = None
+    file_type: Optional[str] = None  # "pdf" 或 "pptx"
+    min_score: float = 0.0
 
 
 # ==================== 配置加载 ====================
@@ -192,6 +202,19 @@ def get_reference_search_service():
     return ReferenceSearchService()
 
 
+def get_vector_store_service():
+    """获取向量存储服务实例"""
+    config = load_config()
+    llm_config = LLMConfig(
+        api_key=config["llm"]["api_key"],
+        base_url=config["llm"]["base_url"],
+        model=config["llm"]["model"]
+    )
+    # 优先使用 vector_store 配置，如果没有则使用 knowledge_base 路径
+    vector_db_path = config.get("vector_store", {}).get("path") or config.get("knowledge_base", {}).get("path", "./ppt_vector_db")
+    return VectorStoreService(llm_config, vector_db_path)
+
+
 # ==================== API 端点 ====================
 
 @app.post("/api/v1/expand-ppt")
@@ -199,8 +222,9 @@ async def expand_ppt(
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = None,
     parser: DocumentParserService = Depends(get_parser_service),
+    vector_store: VectorStoreService = Depends(get_vector_store_service),
 ):
-    """接收 PPTX/PDF 文件或 URL，返回解析后的逻辑结构。"""
+    """接收 PPTX/PDF 文件或 URL，返回解析后的逻辑结构，并存储到向量数据库。"""
     if not file and not url:
         raise HTTPException(status_code=400, detail="需要上传文件或提供 url")
 
@@ -213,7 +237,27 @@ async def expand_ppt(
 
         ext = ensure_supported_ext(filename)
         slides = parser.parse_document(tmp_path, ext)
-        return {"slides": slides}
+        
+        # 存储到向量数据库
+        try:
+            file_type = ext[1:] if ext.startswith('.') else ext  # 移除点号
+            store_result = vector_store.store_document_slides(
+                file_name=filename,
+                file_type=file_type,
+                slides=slides
+            )
+            print(f"✅ 已存储 {store_result['total_chunks']} 个切片到向量数据库")
+        except Exception as e:
+            print(f"⚠️  存储到向量数据库失败: {e}")
+            # 不中断主流程，继续返回解析结果
+        
+        return {
+            "slides": slides,
+            "vector_store": {
+                "stored": True,
+                "total_chunks": store_result.get("total_chunks", 0) if 'store_result' in locals() else 0
+            }
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -453,6 +497,124 @@ async def search_by_concepts(
 async def health_check():
     """健康检查"""
     return {"status": "ok", "version": "0.2.0"}
+
+
+@app.post("/api/v1/search-semantic")
+async def search_semantic(
+    request: SemanticSearchRequest,
+    vector_store: VectorStoreService = Depends(get_vector_store_service),
+):
+    """基于语义搜索 PPT/PDF 切片
+    
+    Args:
+        request: 搜索请求
+        vector_store: 向量存储服务
+    
+    Returns:
+        搜索结果列表
+    """
+    try:
+        results = vector_store.search_similar_slides(
+            query=request.query,
+            top_k=request.top_k,
+            file_name=request.file_name,
+            file_type=request.file_type,
+            min_score=request.min_score
+        )
+        
+        return {
+            "success": True,
+            "query": request.query,
+            "total_results": len(results),
+            "results": results
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
+@app.get("/api/v1/vector-store/stats")
+async def get_vector_store_stats(
+    vector_store: VectorStoreService = Depends(get_vector_store_service),
+):
+    """获取向量数据库统计信息
+    
+    Args:
+        vector_store: 向量存储服务
+    
+    Returns:
+        统计信息
+    """
+    try:
+        stats = vector_store.get_stats()
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
+@app.get("/api/v1/vector-store/file/{file_name}")
+async def get_file_slides(
+    file_name: str,
+    vector_store: VectorStoreService = Depends(get_vector_store_service),
+):
+    """获取特定文件的所有切片
+    
+    Args:
+        file_name: 文件名
+        vector_store: 向量存储服务
+    
+    Returns:
+        该文件的所有切片
+    """
+    try:
+        results = vector_store.search_by_file(file_name)
+        return {
+            "success": True,
+            "file_name": file_name,
+            "total_chunks": len(results),
+            "chunks": results
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
+@app.delete("/api/v1/vector-store/file/{file_name}")
+async def delete_file_slides(
+    file_name: str,
+    vector_store: VectorStoreService = Depends(get_vector_store_service),
+):
+    """删除特定文件的所有切片
+    
+    Args:
+        file_name: 文件名
+        vector_store: 向量存储服务
+    
+    Returns:
+        删除结果
+    """
+    try:
+        success = vector_store.delete_file_slides(file_name)
+        return {
+            "success": success,
+            "file_name": file_name,
+            "message": "删除成功" if success else "未找到文件或删除失败"
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
 
 
 @app.get("/api/v1/health/llm")
