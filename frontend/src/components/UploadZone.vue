@@ -1,10 +1,13 @@
 <script setup>
 import { ref } from 'vue'
 
-const emit = defineEmits(['file-selected', 'mock-click'])
+const emit = defineEmits(['file-selected', 'url-submitted', 'mock-click'])
 const isDragging = ref(false)
 const isProcessing = ref(false)
 const fileInput = ref(null)
+const urlInput = ref('')
+const urlError = ref('')
+const uploadMode = ref('file') // 'file' | 'url'
 
 const handleFileChange = (e) => {
   const file = e.target.files[0]
@@ -36,6 +39,29 @@ const validateAndUpload = (file) => {
   }
 
   emit('file-selected', file)
+}
+
+const submitUrl = () => {
+  const trimmed = urlInput.value.trim()
+  if (!trimmed) {
+    urlError.value = '请输入文件链接（需包含 .pptx 或 .pdf）'
+    return
+  }
+  const lower = trimmed.toLowerCase()
+  if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+    urlError.value = '链接需以 http:// 或 https:// 开头'
+    return
+  }
+  if (!lower.includes('.pptx') && !lower.includes('.pdf')) {
+    urlError.value = '当前仅支持 .pptx / .pdf 链接'
+    return
+  }
+  urlError.value = ''
+  emit('url-submitted', trimmed)
+  isProcessing.value = true
+  setTimeout(() => {
+    isProcessing.value = false
+  }, 400)
 }
 
 const mockDemo = () => {
@@ -86,34 +112,91 @@ const handleUploadBoxClick = () => {
       </div>
     </div>
 
-    <div
-      class="upload-box"
-      :class="{ 'dragging': isDragging, 'processing': isProcessing }"
-      @click="handleUploadBoxClick"
-      @dragover.prevent="isDragging = true"
-      @dragleave.prevent="isDragging = false"
-      @drop.prevent="handleDrop"
-    >
-      <input type="file" ref="fileInput" hidden @change="handleFileChange" accept=".pptx,.pdf" />
+    <div class="upload-area-wrapper">
+      <div class="mode-tabs">
+        <button 
+          class="tab-btn" 
+          :class="{ active: uploadMode === 'file' }"
+          @click="uploadMode = 'file'"
+        >
+          📁 本地上传
+        </button>
+        <button 
+          class="tab-btn" 
+          :class="{ active: uploadMode === 'url' }"
+          @click="uploadMode = 'url'"
+        >
+          🌐 URL 解析
+        </button>
+      </div>
 
-      <div class="upload-content">
-        <div class="upload-icon">
-          <div v-if="!isProcessing">📤</div>
-          <div v-else class="mini-spinner"></div>
-        </div>
+      <!-- 文件上传模式 -->
+      <div
+        v-if="uploadMode === 'file'"
+        class="upload-box dashed-border"
+        :class="{ 'dragging': isDragging, 'processing': isProcessing }"
+        @click="handleUploadBoxClick"
+        @dragover.prevent="isDragging = true"
+        @dragleave.prevent="isDragging = false"
+        @drop.prevent="handleDrop"
+      >
+        <input type="file" ref="fileInput" hidden @change="handleFileChange" accept=".pptx,.pdf" />
 
-        <div v-if="!isProcessing">
-          <p class="upload-text">点击或拖拽 PPT 文件到此处</p>
-          <p class="upload-hint">支持 .pptx 和 .pdf 格式，最大 50MB</p>
-        </div>
-        <div v-else>
-          <p class="upload-text">正在上传文件...</p>
-        </div>
+        <div class="upload-content">
+          <div class="upload-icon">
+            <div v-if="!isProcessing">📤</div>
+            <div v-else class="mini-spinner"></div>
+          </div>
 
-        <div class="upload-features">
-          <div class="feature-tag">✓ AI 自动解析语义层级</div>
-          <div class="feature-tag">✓ 智能检索学术引用</div>
-          <div class="feature-tag">✓ 生成可导出笔记</div>
+          <div v-if="!isProcessing">
+            <p class="upload-text">点击或拖拽 PPT 文件到此处</p>
+            <p class="upload-hint">支持 .pptx 和 .pdf 格式，最大 50MB</p>
+          </div>
+          <div v-else>
+            <p class="upload-text">正在上传文件...</p>
+          </div>
+
+          <div class="upload-features">
+            <div class="feature-tag">✓ AI 自动解析语义层级</div>
+            <div class="feature-tag">✓ 智能检索学术引用</div>
+            <div class="feature-tag">✓ 生成可导出笔记</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- URL 上传模式 -->
+      <div v-else-if="uploadMode === 'url'" class="upload-box dashed-border url-mode-box">
+        <div class="upload-content">
+          <div class="upload-icon">🔗</div>
+          
+          <div v-if="!isProcessing">
+            <p class="upload-text">输入远程 PPT/PDF 链接</p>
+          </div>
+          <div v-else>
+            <div class="mini-spinner center-spinner"></div>
+            <p class="upload-text">正在解析链接...</p>
+          </div>
+          
+          <div class="url-input-wrapper" v-if="!isProcessing">
+            <input
+              v-model="urlInput"
+              class="url-input-large"
+              type="url"
+              placeholder="https://example.com/presentation.pptx"
+              @keyup.enter="submitUrl"
+              @click.stop
+            />
+            <button class="btn-url-large" @click.stop="submitUrl">解析</button>
+          </div>
+          
+          <p class="upload-hint left-align-hint" v-if="!isProcessing">系统将自动下载并提取文档结构与知识点</p>
+          <p v-if="urlError" class="url-error">{{ urlError }}</p>
+
+          <div class="upload-features" v-if="!isProcessing">
+            <div class="feature-tag">✓ 支持 HTTP/HTTPS 协议</div>
+            <div class="feature-tag">✓ 自动识别文件类型</div>
+            <div class="feature-tag">✓ 生成可导出笔记</div>
+          </div>
         </div>
       </div>
     </div>
@@ -242,43 +325,148 @@ const handleUploadBoxClick = () => {
   font-size: 0.9rem;
 }
 
-.upload-box {
-  background: white;
-  border: 2px dashed #cbd5e0;
-  padding: 60px 40px;
-  border-radius: 20px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  cursor: pointer;
+.upload-area-wrapper {
   position: relative;
-  overflow: hidden;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
-.upload-box:hover {
+.mode-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  margin-bottom: 20px;
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #64748b;
+  padding-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn:hover {
+  color: #3b82f6;
+}
+
+.tab-btn.active {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+}
+
+.upload-box {
+  background: white;
+  padding: 60px 60px;
+  border-radius: 20px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); /* 轻微阴影，增加层次感 */
+  min-height: 420px; /* 固定最小高度，保证切换无跳动 */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.dashed-border {
+  border: 2px dashed #3b82f6; /* 统一样式为蓝色虚线，配合截图 */
+  background-color: #f8fafc; /* 淡背景色 */
+}
+
+.url-mode-box {
+  /* URL模式下特定样式，如果不需额外样式可留空 */
+}
+
+/* Specific restoration for file upload box to be clickable */
+.upload-box:not(.url-mode-box) {
+    cursor: pointer;
+    border-color: #cbd5e0; /* 默认灰色虚线，hover变蓝 */
+    background: white;
+}
+
+.upload-box:not(.url-mode-box):hover {
   border-color: #3b82f6;
   background: #f0f7ff;
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(59, 130, 246, 0.15);
 }
 
-.upload-box.dragging {
-  border-color: #3b82f6;
-  background: #dbeafe;
-  transform: scale(1.02);
+.url-input-wrapper {
+  display: flex;
+  gap: 10px;
+  max-width: 90%; /* 使用相对宽度，占用更多空间 */
+  min-width: 600px; /* 保持最小宽度 */
+  margin: 0 auto 2rem;
+  position: relative;
+  z-index: 5;
 }
 
-.upload-box.processing {
-  border-color: #10b981;
-  background: #ecfdf5;
+.url-input-large {
+  flex: 1;
+  padding: 12px 20px;
+  font-size: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.2s;
+  background: white;
 }
+
+.url-input-large:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.btn-url-large {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 0 24px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-url-large:hover {
+  background: #2563eb;
+  transform: translateY(-1px);
+}
+
+.left-align-hint {
+    text-align: center; /* 保持居中更好看，虽然截图似乎是左对齐，但整体居中布局下居中更协调 */
+    margin-bottom: 2rem;
+    margin-top: 0;
+}
+
+.center-spinner {
+    margin: 0 auto 1.5rem;
+    display: flex;
+    justify-content: center;
+}
+
+/* Remove old Tab and URL card styles to clean up */
+/* Keeping spinner and other utilities */
 
 .upload-content {
   position: relative;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
 }
 
 .upload-icon {
   font-size: 3rem;
-  margin-bottom: 1rem;
+  margin-bottom: 2rem;
 }
 
 .mini-spinner {
@@ -294,7 +482,7 @@ const handleUploadBoxClick = () => {
   font-size: 1.2rem;
   font-weight: 600;
   color: #1e293b;
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 1.5rem 0;
 }
 
 .upload-hint {
@@ -306,8 +494,9 @@ const handleUploadBoxClick = () => {
 .upload-features {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.8rem;
+  gap: 1.2rem;
   justify-content: center;
+  margin-top: 1.5rem;
 }
 
 .feature-tag {
@@ -316,6 +505,13 @@ const handleUploadBoxClick = () => {
   padding: 6px 12px;
   border-radius: 20px;
   font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.url-error {
+  margin: 0.4rem 0 0 0;
+  color: #ef4444;
+  font-size: 0.9rem;
   font-weight: 500;
 }
 
@@ -433,6 +629,14 @@ const handleUploadBoxClick = () => {
 
   .guide-steps {
     flex-direction: column;
+  }
+
+  .url-input-wrapper {
+      flex-direction: column;
+  }
+
+  .btn-url-large {
+    width: 100%;
   }
 }
 </style>

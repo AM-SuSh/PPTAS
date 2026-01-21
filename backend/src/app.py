@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, WebSocket
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, WebSocket, Query, Body, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -250,25 +250,28 @@ def get_vector_store_service():
 @app.post("/api/v1/expand-ppt")
 async def expand_ppt(
     file: Optional[UploadFile] = File(None),
-    url: Optional[str] = None,
+    url_query: Optional[str] = Query(None, alias="url"),
+    url_body: Optional[str] = Body(None),
+    url_form: Optional[str] = Form(None, alias="url"),
     parser: DocumentParserService = Depends(get_parser_service),
     vector_store: VectorStoreService = Depends(get_vector_store_service),
 ):
     """接收 PPTX/PDF 文件或 URL，返回解析后的逻辑结构，并存储到向量数据库。"""
-    if not file and not url:
+    incoming_url = (url_form or url_body or url_query or "").strip() if url_form or url_body or url_query else None
+
+    if not file and not incoming_url:
         raise HTTPException(status_code=400, detail="需要上传文件或提供 url")
 
     tmp_path = None
     try:
-        if url:
-            tmp_path, filename = download_to_temp(url)
+        if incoming_url:
+            tmp_path, filename = download_to_temp(incoming_url)
         else:
             tmp_path, filename = await save_upload_to_temp(file)
 
         ext = ensure_supported_ext(filename)
         slides = parser.parse_document(tmp_path, ext)
         
-        # 存储到向量数据库
         try:
             file_type = ext[1:] if ext.startswith('.') else ext  # 移除点号
             store_result = vector_store.store_document_slides(
@@ -279,7 +282,6 @@ async def expand_ppt(
             print(f"✅ 已存储 {store_result['total_chunks']} 个切片到向量数据库")
         except Exception as e:
             print(f"⚠️  存储到向量数据库失败: {e}")
-            # 不中断主流程，继续返回解析结果
         
         return {
             "slides": slides,
