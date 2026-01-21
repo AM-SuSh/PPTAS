@@ -1,14 +1,62 @@
-"""页面级别的深度分析服务"""
+"""页面级别的深度分析服务 - 基于优化的 Agent 流程"""
 
 from typing import List, Dict, Any, Optional
 import json
 
+from langchain.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate, PromptTemplate
-from langchain.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 
 from .mcp_tools import MCPRouter
+from ..agents.base import (
+    GlobalStructureAgent,
+    StructureUnderstandingAgent,
+    GapIdentificationAgent,
+    KnowledgeExpansionAgent,
+    RetrievalAgent,
+    ConsistencyCheckAgent,
+    StructuredOrganizationAgent,
+    GraphState,
+    LLMConfig,
+)
+from ..agents.models import CheckResult
+
+
+class PageKnowledgeClusterer:
+    """单页面知识聚类 - 针对学生理解难度分析"""
+    
+    def __init__(self, llm_config: LLMConfig):
+        self.llm = llm_config.create_llm(temperature=0.3)
+    
+    def run(self, raw_text: str) -> List[Dict[str, Any]]:
+        """分析单页面中学生可能有难度的概念"""
+        template = """作为学习专家,分析以下内容中学生可能有理解难度的概念。
+
+内容:
+{content}
+
+识别难以理解的概念(JSON格式,最多10个):
+[
+  {{
+    "concept": "概念名称",
+    "difficulty_level": 难度1-5,
+    "why_difficult": "为什么难理解(50字内)",
+    "related_concepts": ["相关概念1", "相关概念2"]
+  }}
+]
+
+只返回JSON数组。
+"""
+        prompt = ChatPromptTemplate.from_template(template)
+        chain = prompt | self.llm
+        
+        response = chain.invoke({"content": raw_text[:1500]})  # 限制输入长度
+        
+        try:
+            clusters_data = json.loads(response.content)
+            return clusters_data if isinstance(clusters_data, list) else []
+        except:
+            return []
 
 
 class DeepAnalysisResult(BaseModel):
@@ -19,25 +67,39 @@ class DeepAnalysisResult(BaseModel):
     # 原始内容
     raw_content: str = Field(description="原始文本内容")
     
-    # 深度解析
-    deep_analysis: str = Field(description="AI 深度解析内容 (Markdown)")
-    key_concepts: List[str] = Field(description="关键概念列表")
-    learning_objectives: List[str] = Field(description="学习目标")
+    # 结构化分析
+    page_structure: Dict[str, Any] = Field(description="页面结构化分析结果")
+    knowledge_clusters: List[Dict[str, Any]] = Field(description="知识聚类分析")
+    
+    # 学生理解支持
+    understanding_notes: str = Field(description="结构化学习笔记 (Markdown)")
+    knowledge_gaps: List[Dict[str, Any]] = Field(description="识别的知识缺口")
+    expanded_content: List[Dict[str, str]] = Field(description="补充说明内容")
     
     # 参考文献
-    references: List[Dict[str, str]] = Field(description="参考文献列表")
+    references: List[Dict[str, str]] = Field(default_factory=list, description="参考文献列表")
     
     # 原始数据结构
     raw_points: List[Dict[str, Any]] = Field(default_factory=list, description="原始要点")
 
 
 class PageDeepAnalysisService:
-    """单页深度分析服务"""
+    """单页深度分析服务 - 使用优化的 Agent 流程"""
     
     def __init__(self, llm_config):
-        self.llm = llm_config.create_llm(temperature=0.5)
-        self.mcp_router = MCPRouter()
         self.llm_config = llm_config
+        self.mcp_router = MCPRouter()
+        
+        # 初始化优化的 Agent
+        self.structure_agent = GlobalStructureAgent(llm_config)
+        self.clustering_agent = PageKnowledgeClusterer(llm_config)
+        self.understanding_agent = StructureUnderstandingAgent(llm_config)
+        self.gap_agent = GapIdentificationAgent(llm_config)
+        self.expansion_agent = KnowledgeExpansionAgent(llm_config)
+        self.retrieval_agent = RetrievalAgent(llm_config)
+        self.consistency_agent = ConsistencyCheckAgent(llm_config)
+        self.organization_agent = StructuredOrganizationAgent(llm_config)
+    
     
     def analyze_page(
         self,
@@ -46,7 +108,7 @@ class PageDeepAnalysisService:
         content: str,
         raw_points: List[Dict[str, Any]] = None
     ) -> DeepAnalysisResult:
-        """分析单个页面
+        """分析单个页面 - 使用优化的 Agent 流程
         
         Args:
             page_id: 页面 ID
@@ -57,136 +119,145 @@ class PageDeepAnalysisService:
         Returns:
             DeepAnalysisResult: 深度分析结果
         """
-        # 1. 生成深度分析
-        deep_analysis = self._generate_deep_analysis(title, content)
+        # 初始化状态
+        state: GraphState = {
+            "ppt_texts": [content],
+            "global_outline": {},
+            "knowledge_units": [],
+            "current_unit_id": f"page_{page_id}",
+            "current_page_id": page_id,
+            "raw_text": content,
+            "page_structure": {},
+            "knowledge_clusters": [],
+            "understanding_notes": "",
+            "knowledge_gaps": [],
+            "expanded_content": [],
+            "retrieved_docs": [],
+            "check_result": CheckResult(status="pass", issues=[], suggestions=[]),
+            "final_notes": "",
+            "revision_count": 0,
+            "max_revisions": 1,
+            "streaming_chunks": []
+        }
         
-        # 2. 提取关键概念
-        key_concepts = self._extract_key_concepts(title, content, deep_analysis)
+        # 步骤1: 知识聚类和难度分析（单页版本）
+        try:
+            knowledge_clusters = self.clustering_agent.run(content)
+            state["knowledge_clusters"] = knowledge_clusters
+        except Exception as e:
+            print(f"知识聚类失败: {e}")
+            state["knowledge_clusters"] = []
         
-        # 3. 提取学习目标
-        learning_objectives = self._extract_learning_objectives(title, content)
+        # 步骤2: 学生理解笔记
+        try:
+            state = self.understanding_agent.run(state)
+        except Exception as e:
+            print(f"理解笔记生成失败: {e}")
         
-        # 4. 搜索参考文献
-        references = self._search_references(title, key_concepts)
+        # 步骤3: 识别知识缺口
+        try:
+            state = self.gap_agent.run(state)
+        except Exception as e:
+            print(f"知识缺口识别失败: {e}")
+        
+        # 步骤4: 定向知识扩展
+        try:
+            state = self.expansion_agent.run(state)
+        except Exception as e:
+            print(f"知识扩展失败: {e}")
+        
+        # 步骤5: 外部检索增强
+        try:
+            state = self.retrieval_agent.run(state)
+        except Exception as e:
+            print(f"外部检索失败: {e}")
+        
+        # 步骤6: 一致性校验
+        try:
+            state = self.consistency_agent.run(state)
+        except Exception as e:
+            print(f"一致性校验失败: {e}")
+        
+        # 步骤7: 最终内容组织
+        try:
+            state = self.organization_agent.run(state)
+        except Exception as e:
+            print(f"内容组织失败: {e}")
+        
+        # 搜索参考文献
+        references = self._search_references(
+            title, 
+            [c["concept"] for c in state.get("knowledge_clusters", [])[:3]]
+        )
+        
+        # 转换 expanded_content 为字典列表
+        expanded_content_list = []
+        if state.get("expanded_content"):
+            for ec in state["expanded_content"]:
+                if hasattr(ec, 'concept'):  # 是 ExpandedContent 对象
+                    expanded_content_list.append({
+                        "concept": ec.concept,
+                        "gap_type": ec.gap_type,
+                        "content": ec.content,
+                        "sources": ec.sources
+                    })
+                else:  # 是字典
+                    expanded_content_list.append(ec)
         
         return DeepAnalysisResult(
             page_id=page_id,
             title=title,
             raw_content=content,
-            deep_analysis=deep_analysis,
-            key_concepts=key_concepts,
-            learning_objectives=learning_objectives,
+            page_structure=state.get("page_structure", {}),
+            knowledge_clusters=state.get("knowledge_clusters", []),
+            understanding_notes=state.get("understanding_notes", ""),
+            knowledge_gaps=[
+                {
+                    "concept": gap.concept if hasattr(gap, 'concept') else gap.get("concept", ""),
+                    "gap_types": gap.gap_types if hasattr(gap, 'gap_types') else gap.get("gap_types", []),
+                    "priority": gap.priority if hasattr(gap, 'priority') else gap.get("priority", 3)
+                } for gap in state.get("knowledge_gaps", [])
+            ],
+            expanded_content=expanded_content_list,
             references=references,
             raw_points=raw_points or []
         )
     
-    def _generate_deep_analysis(self, title: str, content: str) -> str:
-        """生成深度分析内容"""
-        template = """你是一位资深的教育专家和学科讲师。请对以下 PPT 内容进行深度分析和讲解。
-
-【页面标题】: {title}
-
-【原始内容】:
-{content}
-
-请提供：
-1. 核心概念的详细解释
-2. 概念之间的关系和联系
-3. 实际应用案例或示例
-4. 常见误区和注意事项
-5. 进阶思考和拓展方向
-
-请用 Markdown 格式组织内容，确保结构清晰，便于理解。
-"""
-        prompt = ChatPromptTemplate.from_template(template)
-        chain = prompt | self.llm
-        
-        response = chain.invoke({
-            "title": title,
-            "content": content
-        })
-        
-        return response.content
-    
-    def _extract_key_concepts(self, title: str, content: str, analysis: str) -> List[str]:
-        """提取关键概念"""
-        template = """从以下内容中提取5-8个核心关键概念。
-
-【标题】: {title}
-【内容】: {content}
-【分析】: {analysis}
-
-请直接返回一个 JSON 数组，格式如下：
-["概念1", "概念2", "概念3", ...]
-
-只返回 JSON 数组，不要其他内容。
-"""
-        prompt = ChatPromptTemplate.from_template(template)
-        chain = prompt | self.llm
-        
-        response = chain.invoke({
-            "title": title,
-            "content": content,
-            "analysis": analysis
-        })
-        
-        try:
-            # 清理响应中可能存在的 markdown 代码块
-            text = response.content.strip()
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.startswith("```"):
-                text = text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            
-            concepts = json.loads(text.strip())
-            return concepts if isinstance(concepts, list) else []
-        except:
-            return [title]
-    
-    def _extract_learning_objectives(self, title: str, content: str) -> List[str]:
-        """提取学习目标"""
-        template = """根据以下页面内容，提取学生完成此部分学习后应该达到的3-5个学习目标。
-
-【标题】: {title}
-【内容】: {content}
-
-学习目标应该：
-- 具体可测量
-- 以"能够/会...开始"
-- 涵盖不同认知层次
-
-请返回 JSON 数组格式：
-["目标1", "目标2", "目标3", ...]
-
-只返回 JSON 数组。
-"""
-        prompt = ChatPromptTemplate.from_template(template)
-        chain = prompt | self.llm
-        
-        response = chain.invoke({
-            "title": title,
-            "content": content
-        })
-        
-        try:
-            text = response.content.strip()
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.startswith("```"):
-                text = text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            
-            objectives = json.loads(text.strip())
-            return objectives if isinstance(objectives, list) else []
-        except:
-            return ["理解 " + title]
     
     def _search_references(self, title: str, concepts: List[str], max_refs: int = 5) -> List[Dict[str, str]]:
-        """搜索参考文献"""
+        """搜索参考文献 - 智能缓存和早期退出"""
         references = []
+        
+        # 检查外部源是否可用（只检查一次）
+        if not hasattr(self, '_sources_checked'):
+            self._sources_checked = True
+            # 检查常用源的可用性
+            available_sources = []
+            try:
+                from urllib.parse import urlparse
+                import requests
+                
+                sources_to_check = {
+                    "arxiv": "https://arxiv.org",
+                    "wikipedia": "https://zh.wikipedia.org"
+                }
+                
+                for source_name, url in sources_to_check.items():
+                    try:
+                        response = requests.head(url, timeout=2, allow_redirects=True)
+                        if response.status_code < 400:
+                            available_sources.append(source_name)
+                    except:
+                        pass
+                
+                self._available_sources = available_sources
+            except:
+                self._available_sources = []
+        
+        # 如果所有源都不可用，直接返回空列表（不要浪费时间）
+        if not self._available_sources:
+            print("⚠️ 所有外部源不可用，跳过参考文献检索")
+            return []
         
         # 组合搜索查询
         search_queries = [title] + concepts[:3]
@@ -196,18 +267,22 @@ class PageDeepAnalysisService:
                 break
             
             try:
-                # 使用 MCP 路由器搜索
-                docs = self.mcp_router.search(query, preferred_sources=["arxiv", "wikipedia"])
+                # 使用 MCP 路由器搜索（仅使用可用的源）
+                docs = self.mcp_router.search(query, preferred_sources=self._available_sources)
                 
                 for doc in docs[:1]:  # 每个查询最多 1 个结果
-                    ref = {
-                        "title": doc.metadata.get("title", query),
-                        "url": doc.metadata.get("url", ""),
-                        "source": doc.metadata.get("source", "Unknown"),
-                        "snippet": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
-                    }
-                    references.append(ref)
-            except:
-                pass
+                    # 过滤掉占位符文档
+                    if "未找到" not in doc.page_content:
+                        ref = {
+                            "title": doc.metadata.get("title", query),
+                            "url": doc.metadata.get("url", ""),
+                            "source": doc.metadata.get("source", "Unknown"),
+                            "snippet": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+                        }
+                        if ref["url"]:  # 只添加有有效 URL 的结果
+                            references.append(ref)
+            except Exception as e:
+                print(f"❌ 查询 '{query}' 失败: {e}")
+                continue
         
         return references

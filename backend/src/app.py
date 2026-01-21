@@ -6,7 +6,7 @@ from datetime import datetime
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.utils.helpers import ensure_supported_ext, save_upload_to_temp, download_to_temp
 from src.services.ppt_parser_service import DocumentParserService
@@ -302,14 +302,14 @@ async def analyze_page(
     request: PageAnalysisRequest,
     service: PageDeepAnalysisService = Depends(get_page_analysis_service),
 ):
-    """对单个页面进行深度分析
+    """对单个页面进行深度分析 - 优化的 Agent 流程
     
     Args:
         request: 分析请求
         service: 分析服务
     
     Returns:
-        页面深度分析结果
+        页面深度分析结果（结构化分析、知识缺口、补充说明等）
     """
     try:
         result = service.analyze_page(
@@ -325,18 +325,150 @@ async def analyze_page(
                 "page_id": result.page_id,
                 "title": result.title,
                 "raw_content": result.raw_content,
-                "deep_analysis": result.deep_analysis,
-                "key_concepts": result.key_concepts,
-                "learning_objectives": result.learning_objectives,
+                "page_structure": result.page_structure,
+                "knowledge_clusters": result.knowledge_clusters,
+                "understanding_notes": result.understanding_notes,
+                "knowledge_gaps": result.knowledge_gaps,
+                "expanded_content": result.expanded_content,
                 "references": result.references,
                 "raw_points": result.raw_points
             }
         }
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"❌ 页面分析错误: {error_trace}")
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={"error": str(e), "details": error_trace}
         )
+
+
+@app.post("/api/v1/analyze-page-stream")
+async def analyze_page_stream(
+    request: PageAnalysisRequest,
+    service: PageDeepAnalysisService = Depends(get_page_analysis_service),
+):
+    """对单个页面进行流式深度分析 - 实时返回各 Agent 的结果
+    
+    Args:
+        request: 分析请求
+        service: 分析服务
+    
+    Returns:
+        Server-Sent Events 流式响应
+    """
+    async def event_generator():
+        try:
+            # 步骤1: 知识聚类
+            print("⏳ 开始知识聚类...")
+            yield f"data: {json.dumps({'stage': 'clustering', 'data': [], 'message': '正在分析难点概念...'})}\n\n"
+            
+            knowledge_clusters = service.clustering_agent.run(request.content)
+            print(f"✅ 知识聚类完成: {len(knowledge_clusters)} 个概念")
+            clustering_msg = f'识别了 {len(knowledge_clusters)} 个难点概念'
+            yield f"data: {json.dumps({'stage': 'clustering', 'data': knowledge_clusters, 'message': clustering_msg})}\n\n"
+            
+            # 步骤2: 学习笔记
+            print("⏳ 开始生成学习笔记...")
+            yield f"data: {json.dumps({'stage': 'understanding', 'data': '', 'message': '正在生成学习笔记...'})}\n\n"
+            
+            from src.agents.models import CheckResult
+            state = {
+                "ppt_texts": [request.content],
+                "global_outline": {},
+                "knowledge_units": [],
+                "current_unit_id": f"page_{request.page_id}",
+                "current_page_id": request.page_id,
+                "raw_text": request.content,
+                "page_structure": {},
+                "knowledge_clusters": knowledge_clusters,
+                "understanding_notes": "",
+                "knowledge_gaps": [],
+                "expanded_content": [],
+                "retrieved_docs": [],
+                "check_result": CheckResult(status="pass", issues=[], suggestions=[]),
+                "final_notes": "",
+                "revision_count": 0,
+                "max_revisions": 1,
+                "streaming_chunks": []
+            }
+            
+            state = service.understanding_agent.run(state)
+            understanding_notes = state.get("understanding_notes", "")
+            print(f"✅ 学习笔记完成")
+            yield f"data: {json.dumps({'stage': 'understanding', 'data': understanding_notes, 'message': '学习笔记已生成'})}\n\n"
+            
+            # 步骤3: 知识缺口
+            print("⏳ 开始识别知识缺口...")
+            yield f"data: {json.dumps({'stage': 'gaps', 'data': [], 'message': '正在识别知识缺口...'})}\n\n"
+            
+            state = service.gap_agent.run(state)
+            gaps_data = [
+                {
+                    "concept": gap.concept,
+                    "gap_types": gap.gap_types,
+                    "priority": gap.priority
+                } for gap in state.get("knowledge_gaps", [])
+            ]
+            print(f"✅ 缺口识别完成: {len(gaps_data)} 个缺口")
+            gaps_msg = f'识别了 {len(gaps_data)} 个理解缺口'
+            yield f"data: {json.dumps({'stage': 'gaps', 'data': gaps_data, 'message': gaps_msg})}\n\n"
+            
+            # 步骤4: 知识扩展
+            print("⏳ 开始生成补充说明...")
+            yield f"data: {json.dumps({'stage': 'expansion', 'data': [], 'message': '正在生成补充说明...'})}\n\n"
+            
+            state = service.expansion_agent.run(state)
+            expanded_data = []
+            if state.get("expanded_content"):
+                for ec in state["expanded_content"]:
+                    if hasattr(ec, 'concept'):
+                        expanded_data.append({
+                            "concept": ec.concept,
+                            "gap_type": ec.gap_type,
+                            "content": ec.content,
+                            "sources": ec.sources
+                        })
+                    else:
+                        expanded_data.append(ec)
+            print(f"✅ 补充说明完成: {len(expanded_data)} 条")
+            expansion_msg = f'生成了 {len(expanded_data)} 条补充说明'
+            yield f"data: {json.dumps({'stage': 'expansion', 'data': expanded_data, 'message': expansion_msg})}\n\n"
+            
+            # 步骤5: 外部检索
+            print("⏳ 开始搜索参考资料...")
+            yield f"data: {json.dumps({'stage': 'retrieval', 'data': [], 'message': '正在搜索参考资料...'})}\n\n"
+            
+            state = service.retrieval_agent.run(state)
+            retrieved_count = len(state.get('retrieved_docs', []))
+            print(f"✅ 检索完成: {retrieved_count} 条参考")
+            retrieval_msg = f'找到了 {retrieved_count} 条参考资料'
+            yield f"data: {json.dumps({'stage': 'retrieval', 'data': [], 'message': retrieval_msg})}\n\n"
+            
+            # 步骤6-7: 校验和整理
+            print("⏳ 进行一致性校验和内容整理...")
+            state = service.consistency_agent.run(state)
+            state = service.organization_agent.run(state)
+            
+            # 最终结果
+            references = service._search_references(
+                request.title,
+                [c["concept"] for c in knowledge_clusters[:3]]
+            )
+            
+            print("✅ 分析完全完成")
+            complete_data = {'page_structure': state.get('page_structure', {}), 'references': references}
+            yield f"data: {json.dumps({'stage': 'complete', 'data': complete_data, 'message': '分析完成！'})}\n\n"
+            
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"❌ 流式分析错误: {error_trace}")
+            error_msg = f'错误: {str(e)}'
+            yield f"data: {json.dumps({'stage': 'error', 'data': {}, 'message': error_msg})}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.post("/api/v1/chat")
@@ -387,7 +519,7 @@ async def chat(
 async def set_tutor_context(
     request: PageAnalysisRequest,
 ):
-    """设置 AI 助教的页面上下文"""
+    """设置 AI 助教的页面上下文 - 与优化的知识分析结构对齐"""
     try:
         # 获取服务实例
         service = get_ai_tutor()
@@ -406,13 +538,25 @@ async def set_tutor_context(
         
         print(f"🔧 设置上下文: page_id={page_id}, title={request.title}")
         
-        # 设置页面上下文
+        # 提取知识集群信息（如果已分析过）
+        knowledge_clusters = request.key_concepts or []
+        if isinstance(knowledge_clusters, list) and len(knowledge_clusters) > 0:
+            # 如果 key_concepts 是字符串列表，转换为字典列表
+            if isinstance(knowledge_clusters[0], str):
+                knowledge_clusters = [
+                    {"concept": c, "difficulty_level": 2} 
+                    for c in knowledge_clusters
+                ]
+        
+        # 设置页面上下文 - 使用新的参数格式
         service.set_page_context(
             page_id=page_id,
             title=request.title,
             content=content_text,
-            key_concepts=request.key_concepts or request.raw_points or [],  # 优先使用 key_concepts
-            analysis=request.analysis or ""  # 使用 analysis 字段
+            knowledge_clusters=knowledge_clusters or [],
+            understanding_notes=request.analysis or "",  # 使用 analysis 字段作为理解笔记
+            knowledge_gaps=getattr(request, 'knowledge_gaps', []),
+            expanded_content=getattr(request, 'expanded_content', [])
         )
         
         print(f"✅ 上下文已保存，当前已知页面: {list(service.page_context.keys())}")

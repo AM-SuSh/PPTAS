@@ -1,4 +1,4 @@
-"""AI 助教对话服务"""
+"""AI 助教对话服务 - 与优化的知识分析结构对齐"""
 
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
@@ -23,7 +23,7 @@ class ChatMessage:
 
 
 class AITutorService:
-    """AI 助教服务 - 基于当前 PPT 页面的对话"""
+    """AI 助教服务 - 基于优化的知识分析与学生理解焦点的对话"""
     
     def __init__(self, llm_config):
         self.llm = llm_config.create_llm(temperature=0.7)
@@ -38,23 +38,29 @@ class AITutorService:
         page_id: int,
         title: str,
         content: str,
-        key_concepts: List[str],
-        analysis: str
+        knowledge_clusters: List[Dict[str, Any]],
+        understanding_notes: str,
+        knowledge_gaps: List[Dict[str, Any]] = None,
+        expanded_content: List[Dict[str, Any]] = None
     ):
-        """设置页面上下文
+        """设置页面上下文 - 与新的知识结构对齐
         
         Args:
             page_id: 页面 ID
             title: 页面标题
             content: 页面原始内容
-            key_concepts: 关键概念列表
-            analysis: 深度分析内容
+            knowledge_clusters: 知识聚类结果（包含难度分析）
+            understanding_notes: 学生理解笔记
+            knowledge_gaps: 识别的知识缺口（可选）
+            expanded_content: 补充说明内容（可选）
         """
         self.page_context[page_id] = {
             "title": title,
             "content": content,
-            "key_concepts": key_concepts,
-            "analysis": analysis
+            "knowledge_clusters": knowledge_clusters,
+            "understanding_notes": understanding_notes,
+            "knowledge_gaps": knowledge_gaps or [],
+            "expanded_content": expanded_content or []
         }
         
         # 初始化该页面的对话历史
@@ -65,9 +71,22 @@ class AITutorService:
         """获取助教欢迎语"""
         context = self.page_context.get(page_id)
         if not context:
-            return "你好！我是基于 PPT 的助教。请先提供页面信息。"
+            return "你好！我是 AI 学习助教。请先加载页面内容。"
         
-        return f"你好！我是基于当前 PPT 的助教。关于 \"{context['title']}\" 你有什么疑问吗？"
+        # 提及识别到的难点
+        difficult_concepts = [
+            c["concept"] for c in context.get("knowledge_clusters", [])
+            if c.get("difficulty_level", 0) >= 3
+        ]
+        
+        greeting = f"你好！关于 \"{context['title']}\"，我已经准备好帮助你了。"
+        
+        if difficult_concepts:
+            greeting += f"\n我注意到这部分内容中 {', '.join(difficult_concepts[:2])} 可能比较难理解，有什么想咨询的吗？"
+        else:
+            greeting += "\n有什么疑问吗？"
+        
+        return greeting
     
     def chat(self, page_id: int, user_message: str) -> str:
         """与用户进行对话
@@ -89,7 +108,7 @@ class AITutorService:
         
         conversation_history = self.conversations[page_id]
         
-        # 构建系统提示词
+        # 构建系统提示词（优化版，聚焦学生理解）
         system_message = self._build_system_prompt(context, conversation_history)
         
         # 构建完整的对话
@@ -97,7 +116,7 @@ class AITutorService:
             SystemMessagePromptTemplate.from_template(system_message).format()
         ]
         
-        # 添加对话历史
+        # 添加对话历史（保留最近的上下文）
         for msg in conversation_history[-6:]:  # 保留最近 6 条消息
             if msg.role == "user":
                 messages.append(HumanMessagePromptTemplate.from_template("{text}").format(text=msg.content))
@@ -119,49 +138,123 @@ class AITutorService:
         return assistant_message
     
     def _build_system_prompt(self, context: Dict[str, Any], history: List[ChatMessage]) -> str:
-        """构建系统提示词"""
-        template = """你是一位资深的 AI 助教，基于以下 PPT 内容为学生解答问题。
+        """构建系统提示词 - 聚焦学生理解障碍"""
+        template = """你是一位耐心的 AI 学习助教，帮助学生理解和掌握知识。
 
-【当前页面标题】: {title}
+【页面标题】: {title}
 
-【页面原始内容】:
+【原始内容】:
 {content}
 
-【关键概念】: {concepts}
+【学生学习笔记】:
+{understanding_notes}
 
-【深度分析】:
-{analysis}
+【知识要点分析】:
+{concepts_analysis}
 
-【你的职责】:
-1. 基于上述页面内容为学生答疑解惑
-2. 用清晰、通俗的语言解释复杂概念
-3. 提供相关的例子或应用场景
-4. 引导学生进行深入思考
-5. 如果问题超出当前页面范围，礼貌地指出并尝试关联到当前内容
+【可能的理解障碍】:
+{gaps_info}
 
-【交互风格】:
-- 友好、耐心、鼓励性
-- 逐步引导而不是直接给出答案
-- 鼓励学生提出更多问题
-- 定期总结关键点
+【补充说明】:
+{expanded_content}
 
-【注意事项】:
-- 始终保持在当前页面的上下文中
-- 不编造不确定的信息
-- 如果不确定，请说 "这是个很好的问题，但超出了我的知识范围"
-- 保持对话的连贯性，考虑之前的问答
+【你的教学风格】:
+1. 以学生为中心 - 始终考虑学生的理解水平
+2. 明确重点 - 突出最重要的概念和易错点
+3. 循序渐进 - 从简单到复杂，从具体到抽象
+4. 举例说明 - 提供实际例子或类比帮助理解
+5. 互动式 - 引导而不是直接给出答案，鼓励思考
 
-现在开始回答学生的问题。
+【重点关注的概念难点】:
+{difficult_concepts}
+
+【禁止】:
+- 不编造信息
+- 不离开当前页面的范围
+- 不过度复杂的数学或技术描述
+- 不忽视学生的理解困难
+
+现在请基于学生的问题和当前内容进行耐心、清晰的讲解。
 """
         
-        concepts_str = ", ".join(context.get("key_concepts", []))
+        # 提取知识聚类信息
+        concepts_analysis = self._format_concepts(context.get("knowledge_clusters", []))
+        
+        # 提取知识缺口信息
+        gaps_info = self._format_gaps(context.get("knowledge_gaps", []))
+        
+        # 提取补充说明信息
+        expanded_content = self._format_expanded_content(context.get("expanded_content", []))
+        
+        # 找出难度高的概念
+        difficult_concepts = [
+            f"- {c['concept']} (难度: {c.get('difficulty_level', 0)}/5)"
+            for c in context.get("knowledge_clusters", [])
+            if c.get("difficulty_level", 0) >= 3
+        ]
+        difficult_str = "\n".join(difficult_concepts) if difficult_concepts else "- 无特别难点"
         
         return template.format(
             title=context.get("title", ""),
-            content=context.get("content", ""),
-            concepts=concepts_str,
-            analysis=context.get("analysis", "")
+            content=context.get("content", "")[:800],  # 限制长度
+            understanding_notes=context.get("understanding_notes", "")[:500],
+            concepts_analysis=concepts_analysis,
+            gaps_info=gaps_info,
+            expanded_content=expanded_content,
+            difficult_concepts=difficult_str
         )
+    
+    def _format_concepts(self, clusters: List[Dict[str, Any]]) -> str:
+        """格式化知识聚类信息"""
+        if not clusters:
+            return "- 无特别分类"
+        
+        lines = []
+        for c in clusters[:5]:  # 最多 5 个
+            concept = c.get("concept", "未知")
+            difficulty = c.get("difficulty_level", 0)
+            why_difficult = c.get("why_difficult", "")
+            
+            line = f"- {concept} (难度: {difficulty}/5)"
+            if why_difficult:
+                line += f" - {why_difficult[:100]}"
+            lines.append(line)
+        
+        return "\n".join(lines) if lines else "- 无特别分类"
+    
+    def _format_gaps(self, gaps: List[Dict[str, Any]]) -> str:
+        """格式化知识缺口信息"""
+        if not gaps:
+            return "- 无识别到的重大缺口"
+        
+        lines = []
+        for g in gaps[:3]:  # 最多 3 个
+            concept = g.get("concept", "未知")
+            gap_types = g.get("gap_types", [])
+            priority = g.get("priority", 0)
+            
+            if gap_types:
+                line = f"- {concept} ({gap_types[0]}, 优先级: {priority}/5)"
+            else:
+                line = f"- {concept} (优先级: {priority}/5)"
+            lines.append(line)
+        
+        return "\n".join(lines) if lines else "- 无识别到的重大缺口"
+    
+    def _format_expanded_content(self, expanded: List[Dict[str, Any]]) -> str:
+        """格式化补充说明内容"""
+        if not expanded:
+            return "- 无额外补充"
+        
+        lines = []
+        for e in expanded[:3]:  # 最多 3 条
+            concept = e.get("concept", "未知")
+            content = e.get("content", "")[:100]
+            
+            line = f"- {concept}: {content}..."
+            lines.append(line)
+        
+        return "\n".join(lines) if lines else "- 无额外补充"
     
     def clear_conversation(self, page_id: int):
         """清除特定页面的对话历史"""

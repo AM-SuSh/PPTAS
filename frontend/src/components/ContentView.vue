@@ -28,6 +28,16 @@ const isSearching = ref(false)
 const searchResults = ref([])
 const searchType = ref('all')
 
+// AI 分析阶段追踪
+const analysisStages = ref({
+  clustering: { name: '知识聚类', completed: false, message: '' },
+  understanding: { name: '生成学习笔记', completed: false, message: '' },
+  gaps: { name: '识别知识缺口', completed: false, message: '' },
+  expansion: { name: '补充说明', completed: false, message: '' },
+  retrieval: { name: '搜索参考资料', completed: false, message: '' },
+  complete: { name: '分析完成', completed: false, message: '' }
+})
+
 // AI 分析控制
 const shouldShowAIAnalysis = ref(false)  // 控制是否显示AI分析卡片
 const isAnalyzingPage = ref(false)  // 追踪AI分析是否正在进行中
@@ -133,32 +143,109 @@ const analyzePageWithAI = async () => {
   
   try {
     isAnalyzingPage.value = true
-    console.log('📤 发送 AI 分析请求...')
-    const response = await pptApi.analyzePage(
+    
+    // 重置分析阶段状态
+    Object.keys(analysisStages.value).forEach(stage => {
+      analysisStages.value[stage].completed = false
+      analysisStages.value[stage].message = ''
+    })
+    
+    console.log('📤 发送流式 AI 分析请求...')
+    
+    // 初始化分析数据容器
+    let analysisData = {
+      knowledge_clusters: [],
+      understanding_notes: '',
+      knowledge_gaps: [],
+      expanded_content: [],
+      references: [],
+      page_structure: {}
+    }
+    
+    // 使用流式 API
+    await pptApi.analyzePageStream(
       pageId,
       props.slide.title || '',
       props.slide.raw_content || '',
-      props.slide.raw_points || []
+      props.slide.raw_points || [],
+      (chunk) => {
+        // 每收到一个 chunk 就立即更新 UI
+        console.log('📨 收到流式数据:', chunk.stage, '-', chunk.message)
+        
+        // 更新阶段状态
+        if (analysisStages.value[chunk.stage]) {
+          analysisStages.value[chunk.stage].completed = true
+          analysisStages.value[chunk.stage].message = chunk.message
+        }
+        
+        if (chunk.stage === 'clustering') {
+          // 知识聚类结果
+          analysisData.knowledge_clusters = chunk.data || []
+          console.log('📊 知识聚类完成:', analysisData.knowledge_clusters.length, '个概念')
+        } 
+        else if (chunk.stage === 'understanding') {
+          // 学习笔记
+          analysisData.understanding_notes = chunk.data || ''
+          console.log('📝 学习笔记生成完成')
+        }
+        else if (chunk.stage === 'gaps') {
+          // 知识缺口
+          analysisData.knowledge_gaps = chunk.data || []
+          console.log('❓ 缺口识别完成:', analysisData.knowledge_gaps.length, '个缺口')
+        }
+        else if (chunk.stage === 'expansion') {
+          // 知识扩展
+          analysisData.expanded_content = chunk.data || []
+          console.log('📚 知识扩展完成:', analysisData.expanded_content.length, '条补充')
+        }
+        else if (chunk.stage === 'retrieval') {
+          // 参考文献
+          analysisData.references = chunk.data || []
+          console.log('🔗 参考文献检索完成:', analysisData.references.length, '条参考')
+        }
+        else if (chunk.stage === 'complete') {
+          // 最终完成
+          console.log('✅ 分析完全完成')
+        }
+        
+        // 实时更新 slide 对象
+        updateSlideWithAnalysis(analysisData)
+      }
     )
     
-    console.log('✅ 收到分析结果')
-    
-    // 提取分析数据
-    let analysisData = response.data?.data || response.data
-    
-    if (analysisData?.deep_analysis) {
-      // 更新 slide 对象
-      props.slide.deep_analysis = analysisData.deep_analysis
-      props.slide.deep_analysis_html = markdownToHtml(analysisData.deep_analysis)
-      props.slide.key_concepts = analysisData.key_concepts || []
-      props.slide.learning_objectives = analysisData.learning_objectives || []
-      props.slide.references = analysisData.references || []
-    }
   } catch (error) {
     console.error('❌ AI 分析失败:', error)
     props.slide.deep_analysis = `❌ 分析失败: ${error.message || '未知错误'}`
   } finally {
     isAnalyzingPage.value = false
+  }
+}
+
+// 更新 slide 对象的分析数据
+const updateSlideWithAnalysis = (analysisData) => {
+  if (analysisData.knowledge_clusters?.length > 0) {
+    props.slide.knowledge_clusters = analysisData.knowledge_clusters
+  }
+  
+  if (analysisData.understanding_notes) {
+    props.slide.deep_analysis = analysisData.understanding_notes
+    props.slide.deep_analysis_html = markdownToHtml(analysisData.understanding_notes)
+  }
+  
+  if (analysisData.knowledge_gaps?.length > 0) {
+    props.slide.knowledge_gaps = analysisData.knowledge_gaps
+  }
+  
+  if (analysisData.expanded_content?.length > 0) {
+    props.slide.expanded_content = analysisData.expanded_content
+  }
+  
+  if (analysisData.references?.length > 0) {
+    props.slide.references = analysisData.references
+  }
+  
+  if (analysisData.page_structure) {
+    props.slide.page_structure = analysisData.page_structure
   }
 }
 
@@ -544,6 +631,21 @@ const formatTime = (timestamp) => {
           <!-- 深度解析内容 -->
           <div class="analysis-section">
             <h4 class="section-title">🤖 AI 深度解析内容</h4>
+            
+            <!-- 分析进度显示 -->
+            <div v-if="isAnalyzingPage" class="analysis-progress">
+              <div class="progress-title">📊 分析进度</div>
+              <div class="stages-container">
+                <div v-for="(stage, key) in analysisStages" :key="key" class="stage-item">
+                  <div class="stage-status">
+                    <span v-if="stage.completed" class="stage-icon completed">✓</span>
+                    <span v-else class="stage-icon pending">◉</span>
+                    <span class="stage-name">{{ stage.name }}</span>
+                  </div>
+                  <div v-if="stage.message" class="stage-message">{{ stage.message }}</div>
+                </div>
+              </div>
+            </div>
             
             <!-- 成功加载的分析内容 -->
             <div v-if="slide.deep_analysis && !slide.deep_analysis.includes('待补充') && !slide.deep_analysis.includes('❌')" class="markdown-body">
@@ -2170,6 +2272,146 @@ const formatTime = (timestamp) => {
   }
   30% {
     transform: translateY(-10px);
+  }
+}
+
+/* 分析进度显示样式 */
+.analysis-progress {
+  background: linear-gradient(135deg, #f0f7ff 0%, #f8fafc 100%);
+  border: 2px solid #3b82f6;
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+.progress-title {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #1e293b;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.stages-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.stage-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.75rem;
+  background: white;
+  border-radius: 8px;
+  border-left: 4px solid #e2e8f0;
+  transition: all 0.3s ease;
+}
+
+.stage-item:hover {
+  border-left-color: #3b82f6;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+}
+
+.stage-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.stage-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: bold;
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+
+.stage-icon.completed {
+  background: #10b981;
+  color: white;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+.stage-icon.pending {
+  background: #f59e0b;
+  color: white;
+  animation: pulse 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.05);
+  }
+}
+
+.stage-name {
+  font-weight: 600;
+  color: #1e293b;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+
+.stage-message {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-left: 32px;
+  display: block;
+  margin-top: 0.3rem;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+  .analysis-progress {
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .stage-item {
+    padding: 0.5rem;
+    gap: 0.75rem;
+  }
+
+  .stage-name {
+    font-size: 0.9rem;
+  }
+
+  .stage-message {
+    font-size: 0.75rem;
+    margin-left: 28px;
+  }
+
+  .progress-title {
+    font-size: 0.95rem;
   }
 }
 </style>

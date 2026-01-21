@@ -34,6 +34,67 @@ export const pptApi = {
         })
     },
 
+    // 新增方法 - 流式深度分析（实时接收结果）
+    async analyzePageStream(pageId, title, content, rawPoints, onChunk) {
+        try {
+            const response = await fetch('/api/v1/analyze-page-stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    page_id: pageId,
+                    title,
+                    content,
+                    raw_points: rawPoints
+                })
+            })
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`)
+            }
+
+            const reader = response.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                
+                // 保留最后一个不完整的行（可能没有 \n）
+                buffer = lines.pop() || ''
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6))
+                            onChunk(data)
+                        } catch (e) {
+                            console.error('Failed to parse chunk:', e)
+                        }
+                    }
+                }
+            }
+
+            // 处理可能剩余的数据
+            if (buffer && buffer.startsWith('data: ')) {
+                try {
+                    const data = JSON.parse(buffer.slice(6))
+                    onChunk(data)
+                } catch (e) {
+                    console.error('Failed to parse final chunk:', e)
+                }
+            }
+        } catch (error) {
+            console.error('Stream analysis error:', error)
+            throw error
+        }
+    },
+
     // 新增方法 - 初始化助教
     setTutorContext(pageId, title, content, keyConcepts, analysis = '') {
     return service.post('/tutor/set-context', {
