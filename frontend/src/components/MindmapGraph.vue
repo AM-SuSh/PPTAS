@@ -1,12 +1,14 @@
 <script setup>
-import {computed, onMounted, ref, watch, nextTick} from 'vue'
+import {computed, onMounted, onUnmounted, ref, watch, nextTick} from 'vue'
 
 const props = defineProps({
   root: {type: Object, required: true}
 })
 
 const containerRef = ref(null)
+const svgRef = ref(null)
 const selected = ref(null)
+const isFullscreen = ref(false)
 
 // 视图状态
 const pan = ref({x: 100, y: 100})
@@ -126,15 +128,301 @@ watch(() => props.root, () => {
 
 onMounted(() => {
   containerRef.value?.addEventListener('wheel', onWheel, {passive: false})
+  
+  // 监听全屏变化
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+  document.addEventListener('mozfullscreenchange', handleFullscreenChange)
+  document.addEventListener('MSFullscreenChange', handleFullscreenChange)
 })
+
+onUnmounted(() => {
+  // 清理事件监听器
+  containerRef.value?.removeEventListener('wheel', onWheel)
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+  document.removeEventListener('mozfullscreenchange', handleFullscreenChange)
+  document.removeEventListener('MSFullscreenChange', handleFullscreenChange)
+})
+
+// 全屏相关函数
+const handleFullscreenChange = () => {
+  isFullscreen.value = !!(
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    document.mozFullScreenElement ||
+    document.msFullscreenElement
+  )
+}
+
+const toggleFullscreen = async () => {
+  if (!containerRef.value) return
+  
+  try {
+    if (!isFullscreen.value) {
+      // 进入全屏
+      if (containerRef.value.requestFullscreen) {
+        await containerRef.value.requestFullscreen()
+      } else if (containerRef.value.webkitRequestFullscreen) {
+        await containerRef.value.webkitRequestFullscreen()
+      } else if (containerRef.value.mozRequestFullScreen) {
+        await containerRef.value.mozRequestFullScreen()
+      } else if (containerRef.value.msRequestFullscreen) {
+        await containerRef.value.msRequestFullscreen()
+      }
+    } else {
+      // 退出全屏
+      if (document.exitFullscreen) {
+        await document.exitFullscreen()
+      } else if (document.webkitExitFullscreen) {
+        await document.webkitExitFullscreen()
+      } else if (document.mozCancelFullScreen) {
+        await document.mozCancelFullScreen()
+      } else if (document.msExitFullscreen) {
+        await document.msExitFullscreen()
+      }
+    }
+  } catch (err) {
+    console.error('全屏操作失败:', err)
+  }
+}
+
+// 导出功能
+const exportAsSVG = () => {
+  if (!svgRef.value || !layout.value.nodes.length) return
+  
+  try {
+    // 计算边界框
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    layout.value.nodes.forEach(node => {
+      const x = node._x
+      const y = node._y
+      const width = node._width || 100
+      minX = Math.min(minX, x)
+      minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x + width)
+      maxY = Math.max(maxY, y + 40)
+    })
+    
+    const padding = 50
+    const svgWidth = maxX - minX + padding * 2
+    const svgHeight = maxY - minY + padding * 2
+    
+    // 创建新的SVG元素
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('width', svgWidth.toString())
+    svg.setAttribute('height', svgHeight.toString())
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    
+    // 添加背景
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    bg.setAttribute('width', '100%')
+    bg.setAttribute('height', '100%')
+    bg.setAttribute('fill', '#fcfcfd')
+    svg.appendChild(bg)
+    
+    // 添加defs（阴影效果）
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+    const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter')
+    filter.setAttribute('id', 'nodeShadow')
+    filter.setAttribute('x', '-20%')
+    filter.setAttribute('y', '-20%')
+    filter.setAttribute('width', '140%')
+    filter.setAttribute('height', '140%')
+    const dropShadow = document.createElementNS('http://www.w3.org/2000/svg', 'feDropShadow')
+    dropShadow.setAttribute('dx', '0')
+    dropShadow.setAttribute('dy', '2')
+    dropShadow.setAttribute('stdDeviation', '3')
+    dropShadow.setAttribute('flood-opacity', '0.1')
+    filter.appendChild(dropShadow)
+    defs.appendChild(filter)
+    svg.appendChild(defs)
+    
+    // 添加连线
+    layout.value.edges.forEach(edge => {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      const x1 = edge.x1 - minX + padding
+      const y1 = edge.y1 - minY + padding
+      const x2 = edge.x2 - minX + padding
+      const y2 = edge.y2 - minY + padding
+      const midX = (x1 + x2) / 2
+      path.setAttribute('d', `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`)
+      path.setAttribute('fill', 'none')
+      path.setAttribute('stroke', '#cbd5e1')
+      path.setAttribute('stroke-width', '1.5')
+      svg.appendChild(path)
+    })
+    
+    // 添加节点
+    layout.value.nodes.forEach(node => {
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      const x = node._x - minX + padding
+      const y = node._y - minY + padding
+      g.setAttribute('transform', `translate(${x}, ${y - 20})`)
+      
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      rect.setAttribute('width', (node._width || 100).toString())
+      rect.setAttribute('height', '40')
+      rect.setAttribute('rx', '8')
+      rect.setAttribute('fill', '#ffffff')
+      rect.setAttribute('stroke', '#e2e8f0')
+      rect.setAttribute('stroke-width', '1')
+      rect.setAttribute('filter', 'url(#nodeShadow)')
+      g.appendChild(rect)
+      
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+      text.setAttribute('x', '15')
+      text.setAttribute('y', '25')
+      text.setAttribute('font-size', '13')
+      text.setAttribute('font-weight', '500')
+      text.setAttribute('fill', '#1e293b')
+      text.textContent = node.label || ''
+      g.appendChild(text)
+      
+      svg.appendChild(g)
+    })
+    
+    // 序列化并下载
+    const svgData = new XMLSerializer().serializeToString(svg)
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+    const svgUrl = URL.createObjectURL(svgBlob)
+    
+    const downloadLink = document.createElement('a')
+    downloadLink.href = svgUrl
+    downloadLink.download = 'mindmap.svg'
+    document.body.appendChild(downloadLink)
+    downloadLink.click()
+    document.body.removeChild(downloadLink)
+    URL.revokeObjectURL(svgUrl)
+  } catch (err) {
+    console.error('导出SVG失败:', err)
+    alert('导出SVG失败: ' + err.message)
+  }
+}
+
+const exportAsPNG = async () => {
+  if (!svgRef.value || !layout.value.nodes.length) return
+  
+  try {
+    // 计算边界框
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    layout.value.nodes.forEach(node => {
+      const x = node._x
+      const y = node._y
+      const width = node._width || 100
+      minX = Math.min(minX, x)
+      minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x + width)
+      maxY = Math.max(maxY, y + 40)
+    })
+    
+    const padding = 50
+    const svgWidth = maxX - minX + padding * 2
+    const svgHeight = maxY - minY + padding * 2
+    
+    // 创建SVG字符串（与exportAsSVG相同的逻辑）
+    let svgString = `<svg width="${svgWidth}" height="${svgHeight}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="nodeShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+        </filter>
+      </defs>
+      <rect width="100%" height="100%" fill="#fcfcfd"/>
+    `
+    
+    // 添加连线
+    layout.value.edges.forEach(edge => {
+      const x1 = edge.x1 - minX + padding
+      const y1 = edge.y1 - minY + padding
+      const x2 = edge.x2 - minX + padding
+      const y2 = edge.y2 - minY + padding
+      const midX = (x1 + x2) / 2
+      svgString += `<path d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" fill="none" stroke="#cbd5e1" stroke-width="1.5"/>`
+    })
+    
+    // 添加节点
+    layout.value.nodes.forEach(node => {
+      const x = node._x - minX + padding
+      const y = node._y - minY + padding
+      const width = node._width || 100
+      svgString += `<g transform="translate(${x}, ${y - 20})">
+        <rect width="${width}" height="40" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" filter="url(#nodeShadow)"/>
+        <text x="15" y="25" font-size="13" font-weight="500" fill="#1e293b">${(node.label || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</text>
+      </g>`
+    })
+    
+    svgString += '</svg>'
+    
+    // 创建图片并转换为PNG
+    const img = new Image()
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(svgBlob)
+    
+    await new Promise((resolve, reject) => {
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = svgWidth
+        canvas.height = svgHeight
+        const ctx = canvas.getContext('2d')
+        
+        // 设置白色背景
+        ctx.fillStyle = '#fcfcfd'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        
+        ctx.drawImage(img, 0, 0)
+        URL.revokeObjectURL(url)
+        
+        // 下载PNG
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error('无法创建PNG blob'))
+            return
+          }
+          const pngUrl = URL.createObjectURL(blob)
+          const downloadLink = document.createElement('a')
+          downloadLink.href = pngUrl
+          downloadLink.download = 'mindmap.png'
+          document.body.appendChild(downloadLink)
+          downloadLink.click()
+          document.body.removeChild(downloadLink)
+          URL.revokeObjectURL(pngUrl)
+          resolve()
+        }, 'image/png')
+      }
+      img.onerror = () => {
+        URL.revokeObjectURL(url)
+        reject(new Error('图片加载失败'))
+      }
+      img.src = url
+    })
+  } catch (err) {
+    console.error('导出PNG失败:', err)
+    alert('导出PNG失败: ' + err.message)
+  }
+}
 </script>
 
 <template>
   <div class="mindmap-container" ref="containerRef"
        @mousedown="startPan" @mousemove="doPan" @mouseup="endPan" @mouseleave="endPan">
 
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <button @click="toggleFullscreen" class="toolbar-btn" title="全屏显示">
+        <span v-if="!isFullscreen">⛶</span>
+        <span v-else>⛶</span>
+        全屏
+      </button>
+      <button @click="exportAsSVG" class="toolbar-btn" title="导出为SVG">
+        📥 SVG
+      </button>
+      <button @click="exportAsPNG" class="toolbar-btn" title="导出为PNG">
+        📥 PNG
+      </button>
+    </div>
+
     <!-- 画布主体 -->
-    <svg class="mindmap-svg">
+    <svg class="mindmap-svg" ref="svgRef">
       <defs>
         <filter id="nodeShadow" x="-20%" y="-20%" width="140%" height="140%">
           <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
@@ -388,6 +676,47 @@ onMounted(() => {
   font-size: 12px;
   backdrop-filter: blur(4px);
   pointer-events: none;
+}
+
+.toolbar {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  gap: 8px;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  padding: 8px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+.toolbar-btn {
+  padding: 8px 16px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #1e293b;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.toolbar-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.toolbar-btn:active {
+  transform: translateY(0);
 }
 
 /* 动画 */
