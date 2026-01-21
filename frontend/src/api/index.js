@@ -14,6 +14,13 @@ export const pptApi = {
             headers: { 'Content-Type': 'multipart/form-data' }
         })
     },
+    uploadByUrl(url) {
+        const formData = new FormData()
+        formData.append('url', url)
+        return service.post('/expand-ppt', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        })
+    },
     mindmap(payload) {
         return service.post('/mindmap', payload)
     },

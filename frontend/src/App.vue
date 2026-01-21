@@ -29,14 +29,36 @@ const handleFileUpload = async (file) => {
 
   try {
     const response = await pptApi.uploadAndExpand(file);
-    // 后端返回 { slides: [...] }
     slidesData.value = response.data.slides || [];
-    appState.value = 'workspace';  // 立即进入工作台
-    
-    // 异步生成思维导图（不阻挡UI）
+    appState.value = 'workspace';
     buildMindmapForDeck().catch(err => console.error("思维导图生成失败:", err));
   } catch (error) {
     console.error("上传失败", error);
+    alert("解析失败: " + (error.response?.data?.detail || error.message));
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+const handleUrlUpload = async (url) => {
+  if (!url) return;
+  isLoading.value = true;
+  appState.value = 'upload';
+  try {
+    const response = await pptApi.uploadByUrl(url);
+    let remoteName = '在线文件';
+    try {
+      const parsed = new URL(url);
+      remoteName = parsed.pathname.split('/').pop() || remoteName;
+    } catch {
+      remoteName = url.split('/').pop() || remoteName;
+    }
+    fileName.value = remoteName;
+    slidesData.value = response.data.slides || [];
+    appState.value = 'workspace';
+    buildMindmapForDeck().catch(err => console.error("思维导图生成失败:", err));
+  } catch (error) {
+    console.error("链接解析失败", error);
     alert("解析失败: " + (error.response?.data?.detail || error.message));
   } finally {
     isLoading.value = false;
@@ -135,6 +157,7 @@ const resetApp = () => {
       <UploadZone
           v-if="!isLoading"
           @file-selected="handleFileUpload"
+          @url-submitted="handleUrlUpload"
           @mock-click="handleFileUpload"
       />
 
@@ -170,8 +193,7 @@ const resetApp = () => {
   overflow-y: auto;
   background: #f8fafc;
   display: flex;
-  justify-content: center;
-  align-items: center;
+  flex-direction: column;
   padding: 2rem;
 }
 
@@ -206,6 +228,7 @@ const resetApp = () => {
 }
 
 .loading-overlay {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
