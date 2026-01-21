@@ -110,6 +110,50 @@ const simulateMockData = async () => {
 };
 
 const buildMindmapForDeck = async () => {
+  // 优先使用全局分析结果生成思维导图
+  if (docId.value) {
+    mindmapLoading.value = true;
+    mindmapError.value = '';
+
+    try {
+      // 先尝试获取全局分析结果（如果不存在则自动触发分析）
+      const analysisRes = await pptApi.analyzeDocumentGlobal(docId.value, false);
+      if (analysisRes.data?.success && analysisRes.data?.global_analysis) {
+        // 使用全局分析结果生成思维导图
+        const res = await pptApi.mindmapFromGlobalAnalysis(
+          docId.value,
+          fileName.value || null,
+          6,
+          25
+        );
+        mindmapData.value = res.data;  // 保持完整响应格式 {root: {...}}
+      } else {
+        // 如果没有全局分析结果，回退到基于slides的方式
+        console.warn('全局分析结果不可用，回退到基于slides的思维导图生成');
+        await buildMindmapFromSlides();
+      }
+    } catch (err) {
+      console.error('基于全局分析的思维导图生成失败', err);
+      // 如果全局分析失败，回退到基于slides的方式
+      if (err.response?.status === 400 && err.response?.data?.detail?.includes('尚未进行全局分析')) {
+        console.warn('文档尚未进行全局分析，回退到基于slides的思维导图生成');
+        await buildMindmapFromSlides();
+      } else {
+        mindmapError.value = err.response?.data?.detail || err.message || '生成失败';
+        mindmapData.value = null;
+      }
+    } finally {
+      mindmapLoading.value = false;
+    }
+  } else if (slidesData.value && slidesData.value.length > 0) {
+    // 如果没有docId，使用原来的基于slides的方式
+    await buildMindmapFromSlides();
+  } else {
+    mindmapData.value = null;
+  }
+};
+
+const buildMindmapFromSlides = async () => {
   if (!slidesData.value || slidesData.value.length === 0) {
     mindmapData.value = null;
     return;

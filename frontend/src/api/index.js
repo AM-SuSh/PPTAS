@@ -27,6 +27,14 @@ export const pptApi = {
     mindmapFromSlides(payload) {
         return service.post('/mindmap/from-slides', payload)
     },
+    mindmapFromGlobalAnalysis(docId, title = null, maxDepth = 6, maxChildrenPerNode = 25) {
+        return service.post('/mindmap/from-global-analysis', {
+            doc_id: docId,
+            title: title,
+            max_depth: maxDepth,
+            max_children_per_node: maxChildrenPerNode
+        })
+    },
     searchKnowledge(query) {
         return service.get('/search', { params: { q: query } })
     },

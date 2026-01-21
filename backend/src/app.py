@@ -195,6 +195,13 @@ class MindmapFromSlidesRequest(BaseModel):
     max_children_per_node: int = Field(default=20, ge=1, le=100)
 
 
+class MindmapFromGlobalAnalysisRequest(BaseModel):
+    doc_id: str = Field(description="文档ID，用于获取全局分析结果")
+    title: Optional[str] = Field(default=None, description="整体 PPT 标题，可选（默认使用全局分析的主题）")
+    max_depth: int = Field(default=4, ge=1, le=8)
+    max_children_per_node: int = Field(default=20, ge=1, le=100)
+
+
 @app.post("/api/v1/mindmap")
 async def build_mindmap(
     payload: MindmapRequest,
@@ -224,6 +231,37 @@ async def build_mindmap_from_slides(
     return svc.build_mindmap_for_ppt(
         slides=[s.model_dump() for s in payload.slides],
         deck_title=payload.title or "PPT Mindmap",
+        max_depth=payload.max_depth,
+        max_children_per_node=payload.max_children_per_node,
+    )
+
+
+@app.post("/api/v1/mindmap/from-global-analysis")
+async def build_mindmap_from_global_analysis(
+    payload: MindmapFromGlobalAnalysisRequest,
+    svc: MindmapService = Depends(get_mindmap_service),
+    persistence: PersistenceService = Depends(get_persistence_service),
+):
+    """
+    Build a mindmap from global analysis results.
+    Uses the global_analysis_json stored in the database for the given doc_id.
+    """
+    # 获取文档和全局分析结果
+    doc = persistence.get_document_by_id(payload.doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"文档不存在: {payload.doc_id}")
+    
+    global_analysis = doc.get("global_analysis")
+    if not global_analysis:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文档 {payload.doc_id} 尚未进行全局分析，请先执行全局分析"
+        )
+    
+    # 使用全局分析结果生成思维导图
+    return svc.build_mindmap_from_global_analysis(
+        global_analysis=global_analysis,
+        deck_title=payload.title,
         max_depth=payload.max_depth,
         max_children_per_node=payload.max_children_per_node,
     )
