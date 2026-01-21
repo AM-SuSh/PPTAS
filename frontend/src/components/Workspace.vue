@@ -20,6 +20,8 @@ const analysisCache = ref({})  // 缓存分析结果
 const hasPreloaded = ref(false)
 const isAnalyzingGlobal = ref(false)  // 全局分析是否正在进行
 const globalAnalysisResult = ref(null)  // 全局分析结果
+const isExporting = ref(false)  // 导出是否正在进行
+const showExportOptions = ref(false)  // 是否显示导出选项弹窗
 
 const currentSlide = computed(() => props.slides[currentSlideIndex.value])
 
@@ -340,6 +342,120 @@ const triggerGlobalAnalysis = async (force = false) => {
     isAnalyzingGlobal.value = false
   }
 }
+
+// 导出AI分析内容
+const exportAnalysis = async (options = {}) => {
+  if (!props.docId) {
+    alert('❌ 无法导出：未找到文档ID')
+    return
+  }
+  
+  try {
+    isExporting.value = true
+    console.log('📥 开始导出AI分析内容...', {
+      docId: props.docId,
+      options: options
+    })
+    
+    const response = await pptApi.exportAnalysis(props.docId, options)
+    
+    console.log('📦 收到响应:', {
+      status: response.status,
+      dataType: typeof response.data,
+      dataSize: response.data?.size || response.data?.length,
+      headers: response.headers
+    })
+    
+    // 创建下载链接
+    const blob = new Blob([response.data], { type: 'text/markdown; charset=utf-8' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    
+    // 从响应头获取文件名，如果没有则使用默认名称
+    const contentDisposition = response.headers['content-disposition']
+    let fileName = 'AI分析内容.md'
+    if (contentDisposition) {
+      // 支持 RFC 5987 格式 (filename*=UTF-8''encoded-name)
+      const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''(.+)/)
+      if (rfc5987Match && rfc5987Match[1]) {
+        fileName = decodeURIComponent(rfc5987Match[1])
+      } else {
+        const fileNameMatch = contentDisposition.match(/filename="?([^"]+)"?/)
+        if (fileNameMatch && fileNameMatch[1]) {
+          fileName = decodeURIComponent(fileNameMatch[1])
+        }
+      }
+    }
+    
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    
+    console.log('✅ 导出成功:', fileName)
+    
+  } catch (err) {
+    console.error('❌ 导出失败详情:', {
+      message: err.message,
+      response: err.response,
+      status: err.response?.status,
+      data: err.response?.data
+    })
+    
+    // 尝试解析错误信息
+    let errorMsg = '未知错误'
+    if (err.response?.data) {
+      if (err.response.data instanceof Blob) {
+        // 如果是Blob，尝试读取文本
+        try {
+          const text = await err.response.data.text()
+          const json = JSON.parse(text)
+          errorMsg = json.detail || text
+        } catch (e) {
+          errorMsg = '无法解析错误信息'
+        }
+      } else if (typeof err.response.data === 'object') {
+        errorMsg = err.response.data.detail || JSON.stringify(err.response.data)
+      } else {
+        errorMsg = err.response.data
+      }
+    } else {
+      errorMsg = err.message
+    }
+    
+    alert(`❌ 导出失败: ${errorMsg}`)
+  } finally {
+    isExporting.value = false
+    showExportOptions.value = false
+  }
+}
+
+// 快速导出（完整版）
+const quickExportFull = () => {
+  exportAnalysis({
+    includeGlobal: true,
+    includePages: true,
+    pageRange: null,
+    exportType: 'full'
+  })
+}
+
+// 快速导出（摘要版）
+const quickExportSummary = () => {
+  exportAnalysis({
+    includeGlobal: true,
+    includePages: false,
+    pageRange: null,
+    exportType: 'summary'
+  })
+}
+
+// 切换导出选项弹窗
+const toggleExportOptions = () => {
+  showExportOptions.value = !showExportOptions.value
+}
 </script>
 
 <template>
@@ -384,6 +500,39 @@ const triggerGlobalAnalysis = async (force = false) => {
             <span v-if="isAnalyzingGlobal" class="analyzing-spinner">⏳</span>
             <span v-else>🔄</span>
             {{ isAnalyzingGlobal ? '重新分析中...' : '重新分析' }}
+          </button>
+          
+          <!-- 导出按钮 -->
+          <div class="export-dropdown" v-if="!isExporting">
+            <button 
+              @click="toggleExportOptions"
+              class="btn-export"
+              title="导出AI分析内容为Markdown文件"
+            >
+              📥 导出分析
+            </button>
+            
+            <!-- 导出选项下拉菜单 -->
+            <div v-if="showExportOptions" class="export-options">
+              <button @click="quickExportFull" class="export-option">
+                📄 导出完整分析
+                <span class="option-desc">包含全局分析和所有页面的详细分析</span>
+              </button>
+              <button @click="quickExportSummary" class="export-option">
+                📋 导出摘要
+                <span class="option-desc">仅包含全局分析和统计信息</span>
+              </button>
+            </div>
+          </div>
+          
+          <!-- 导出中状态 -->
+          <button 
+            v-else
+            disabled
+            class="btn-export"
+          >
+            <span class="analyzing-spinner">⏳</span>
+            导出中...
           </button>
         </div>
         
@@ -527,7 +676,8 @@ const triggerGlobalAnalysis = async (force = false) => {
 }
 
 .btn-global-analyze,
-.btn-global-reanalyze {
+.btn-global-reanalyze,
+.btn-export {
   padding: 8px 16px;
   border: none;
   border-radius: 6px;
@@ -575,5 +725,74 @@ const triggerGlobalAnalysis = async (force = false) => {
 .analyzing-spinner {
   display: inline-block;
   animation: spin 1s linear infinite;
+}
+
+/* 导出按钮样式 */
+.export-dropdown {
+  position: relative;
+}
+
+.btn-export {
+  background: rgba(76, 175, 80, 0.9);
+  color: white;
+  border: 1px solid rgba(76, 175, 80, 1);
+}
+
+.btn-export:hover:not(:disabled) {
+  background: rgba(76, 175, 80, 1);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4);
+}
+
+.btn-export:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* 导出选项下拉菜单 */
+.export-options {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  z-index: 1000;
+  min-width: 280px;
+}
+
+.export-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  background: white;
+  color: #333;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+  text-align: left;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.export-option:last-child {
+  border-bottom: none;
+}
+
+.export-option:hover {
+  background: #f8f9fa;
+}
+
+.option-desc {
+  font-size: 12px;
+  font-weight: normal;
+  color: #666;
+  margin-top: 4px;
 }
 </style>

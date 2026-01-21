@@ -7,7 +7,7 @@ import uuid
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, WebSocket, Query, Body, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 
 from src.utils.helpers import ensure_supported_ext, save_upload_to_temp, download_to_temp
 from src.services.ppt_parser_service import DocumentParserService
@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from src.services.mindmap_service import MindmapService
 from src.services.persistence_service import PersistenceService
+from src.services.export_service import ExportService
 
 app = FastAPI(title="PPTAS Backend", version="0.2.0")
 
@@ -98,6 +99,15 @@ class SemanticSearchRequest(BaseModel):
     """语义搜索请求"""
     query: str
     top_k: int = 5
+
+
+class ExportRequest(BaseModel):
+    """导出请求"""
+    doc_id: str
+    include_global: bool = True  # 是否包含全局分析
+    include_pages: bool = True  # 是否包含页面分析
+    page_range: Optional[List[int]] = None  # 指定页面范围（None表示全部）
+    export_type: str = "full"  # "full" | "summary"
     file_name: Optional[str] = None
     file_type: Optional[str] = None  # "pdf" 或 "pptx"
     min_score: float = 0.0
@@ -1493,6 +1503,102 @@ async def clear_conversation(page_id: int):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/export")
+async def export_analysis(
+    request: ExportRequest,
+    persistence: PersistenceService = Depends(get_persistence_service)
+):
+    """
+    导出AI分析补充内容为Markdown格式
+    
+    Args:
+        request: 导出请求，包含doc_id、导出选项等
+        
+    Returns:
+        Markdown格式的文件下载响应
+    """
+    try:
+        # 1. 获取文档信息
+        doc = persistence.get_document_by_id(request.doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"文档未找到: {request.doc_id}")
+        
+        doc_info = {
+            "file_name": doc.get("file_name", "未知文档"),
+            "file_type": doc.get("file_type", "unknown"),
+            "created_at": doc.get("created_at", ""),
+            "updated_at": doc.get("updated_at", "")
+        }
+        
+        # 2. 获取全局分析
+        global_analysis = doc.get("global_analysis") if request.include_global else None
+        
+        # 3. 获取页面分析
+        page_analyses = None
+        if request.include_pages:
+            page_analyses = persistence.list_page_analyses(request.doc_id)
+            
+            # 如果指定了页面范围，只保留指定的页面
+            if request.page_range:
+                page_analyses = {
+                    page_id: data 
+                    for page_id, data in page_analyses.items() 
+                    if page_id in request.page_range
+                }
+        
+        # 4. 生成导出内容
+        export_service = ExportService()
+        
+        if request.export_type == "summary":
+            # 导出摘要
+            total_pages = len(doc.get("slides", []))
+            analyzed_pages = len(page_analyses) if page_analyses else 0
+            
+            markdown_content = export_service.export_summary_markdown(
+                doc_info=doc_info,
+                global_analysis=global_analysis,
+                page_count=total_pages,
+                analyzed_pages=analyzed_pages
+            )
+            file_name = f"{doc_info['file_name']}_AI分析摘要.md"
+        else:
+            # 导出完整内容
+            markdown_content = export_service.export_to_markdown(
+                doc_info=doc_info,
+                global_analysis=global_analysis,
+                page_analyses=page_analyses,
+                include_global=request.include_global,
+                include_pages=request.include_pages,
+                page_range=request.page_range
+            )
+            file_name = f"{doc_info['file_name']}_AI分析补充内容.md"
+        
+        # 5. 返回文件下载响应
+        # 使用URL编码确保文件名兼容性
+        from urllib.parse import quote
+        encoded_filename = quote(file_name)
+        
+        return Response(
+            content=markdown_content.encode('utf-8'),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename*=UTF-8\'\'{encoded_filename}',
+                "Content-Type": "text/markdown; charset=utf-8"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"❌ 导出失败: {error_trace}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"导出失败: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

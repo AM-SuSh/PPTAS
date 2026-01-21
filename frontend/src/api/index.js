@@ -225,5 +225,25 @@ export const pptApi = {
     // 新增方法 - 删除特定文件的所有切片
     deleteFileSlides(fileName) {
         return service.delete(`/vector-store/file/${encodeURIComponent(fileName)}`)
+    },
+
+    // 新增方法 - 导出AI分析内容
+    exportAnalysis(docId, options = {}) {
+        const {
+            includeGlobal = true,
+            includePages = true,
+            pageRange = null,
+            exportType = 'full'  // 'full' | 'summary'
+        } = options
+
+        return service.post('/export', {
+            doc_id: docId,
+            include_global: includeGlobal,
+            include_pages: includePages,
+            page_range: pageRange,
+            export_type: exportType
+        }, {
+            responseType: 'blob'  // 重要：接收二进制文件
+        })
     }
 }
