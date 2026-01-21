@@ -432,6 +432,142 @@ async def get_all_page_analysis(
     data = persistence.list_page_analyses(doc_id)
     return {"success": True, "data": data}
 
+
+class GlobalAnalysisRequest(BaseModel):
+    """全局分析请求"""
+    doc_id: str
+    force: Optional[bool] = False  # 强制重新分析，忽略缓存
+
+
+@app.post("/api/v1/analyze-document-global")
+async def analyze_document_global(
+    request: GlobalAnalysisRequest,
+    service: PageDeepAnalysisService = Depends(get_page_analysis_service),
+    persistence: PersistenceService = Depends(get_persistence_service),
+):
+    """对整个文档进行全局分析，获取主题和知识点框架
+    
+    这个接口应该在文档上传后调用，用于：
+    1. 分析整个文档的主题和结构
+    2. 提取全局知识点框架
+    3. 识别知识逻辑流程
+    
+    Args:
+        request: 全局分析请求，包含 doc_id 和可选的 force 参数
+    """
+    try:
+        doc = persistence.get_document_by_id(request.doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="未找到文档")
+        
+        # 检查是否已有全局分析（除非强制重新分析）
+        if not request.force and doc.get("global_analysis"):
+            print(f"♻️  文档 {request.doc_id} 已有全局分析，直接返回")
+            return {
+                "success": True,
+                "doc_id": request.doc_id,
+                "global_analysis": doc["global_analysis"],
+                "cached": True
+            }
+        
+        if request.force:
+            print(f"🔄 强制重新进行全局分析，忽略缓存 (doc_id={request.doc_id})")
+        
+        slides = doc.get("slides", [])
+        if not slides:
+            raise HTTPException(status_code=400, detail="文档没有slides数据")
+        
+        # 提取所有页面的文本内容
+        ppt_texts = []
+        for slide in slides:
+            # 提取文本内容
+            content_parts = []
+            if slide.get("title"):
+                content_parts.append(f"标题: {slide['title']}")
+            if slide.get("raw_points"):
+                for point in slide["raw_points"]:
+                    if isinstance(point, dict):
+                        content_parts.append(point.get("text", ""))
+                    elif isinstance(point, str):
+                        content_parts.append(point)
+            if slide.get("raw_content"):
+                content_parts.append(slide["raw_content"])
+            
+            slide_text = "\n".join(content_parts)
+            if slide_text.strip():
+                ppt_texts.append(slide_text)
+        
+        print(f"📊 开始全局分析，文档 {request.doc_id}，共 {len(ppt_texts)} 页")
+        
+        # 使用 GlobalStructureAgent 进行全局分析
+        from src.agents.models import CheckResult
+        state = {
+            "ppt_texts": ppt_texts,
+            "global_outline": {},
+            "knowledge_units": [],
+            "current_unit_id": "global",
+            "current_page_id": 0,
+            "raw_text": "\n\n".join([f"第{i+1}页:\n{text}" for i, text in enumerate(ppt_texts)]),
+            "page_structure": {},
+            "knowledge_clusters": [],
+            "understanding_notes": "",
+            "knowledge_gaps": [],
+            "expanded_content": [],
+            "retrieved_docs": [],
+            "check_result": CheckResult(status="pass", issues=[], suggestions=[]),
+            "final_notes": "",
+            "revision_count": 0,
+            "max_revisions": 1,
+            "streaming_chunks": []
+        }
+        
+        # 步骤1: 全局结构解析
+        print("⏳ 开始全局结构解析...")
+        state = service.structure_agent.run(state)
+        global_outline = state.get("global_outline", {})
+        print(f"✅ 全局结构解析完成: {global_outline.get('main_topic', '未知主题')}")
+        
+        # 步骤2: 全局知识点聚类
+        print("⏳ 开始全局知识点聚类...")
+        from src.agents.base import KnowledgeClusteringAgent
+        clustering_agent = KnowledgeClusteringAgent(service.llm_config)
+        state = clustering_agent.run(state)
+        knowledge_units = state.get("knowledge_units", [])
+        print(f"✅ 全局知识点聚类完成: {len(knowledge_units)} 个知识点单元")
+        
+        # 构建全局分析结果
+        global_analysis = {
+            "main_topic": global_outline.get("main_topic", ""),
+            "chapters": global_outline.get("chapters", []),
+            "knowledge_flow": global_outline.get("knowledge_flow", ""),
+            "knowledge_units": [
+                {
+                    "unit_id": unit.unit_id,
+                    "title": unit.title,
+                    "pages": unit.pages,
+                    "core_concepts": unit.core_concepts
+                } for unit in knowledge_units
+            ],
+            "total_pages": len(ppt_texts)
+        }
+        
+        # 保存全局分析结果
+        persistence.update_global_analysis(request.doc_id, global_analysis)
+        print(f"✅ 全局分析完成并已保存: {request.doc_id}")
+        
+        return {
+            "success": True,
+            "doc_id": request.doc_id,
+            "global_analysis": global_analysis,
+            "cached": False
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"全局分析失败: {str(e)}")
+
 @app.post("/api/v1/analyze-page-stream")
 async def analyze_page_stream(
     request: PageAnalysisRequest,
@@ -473,11 +609,25 @@ async def analyze_page_stream(
             if request.force:
                 yield f"data: {json.dumps({'stage': 'info', 'data': {}, 'message': '🔄 强制重新分析，忽略缓存...'})}\n\n"
 
-            # 步骤1: 知识聚类
+            # 获取全局分析结果（如果有）
+            global_analysis = None
+            if request.doc_id:
+                doc = persistence.get_document_by_id(request.doc_id)
+                if doc and doc.get("global_analysis"):
+                    global_analysis = doc["global_analysis"]
+                    print(f"📚 加载全局分析结果: 主题={global_analysis.get('main_topic', '未知')}, 知识点单元={len(global_analysis.get('knowledge_units', []))}")
+                else:
+                    print(f"⚠️  文档 {request.doc_id} 没有全局分析结果，将仅基于当前页面分析")
+            
+            # 步骤1: 知识聚类（基于全局上下文）
             print("⏳ 开始知识聚类...")
             yield f"data: {json.dumps({'stage': 'clustering', 'data': [], 'message': '正在分析难点概念...'})}\n\n"
             
-            knowledge_clusters = service.clustering_agent.run(request.content)
+            # 如果有全局分析，将全局知识点单元传递给聚类agent
+            knowledge_clusters = service.clustering_agent.run(
+                request.content,
+                global_context=global_analysis
+            )
             print(f"✅ 知识聚类完成: {len(knowledge_clusters)} 个概念")
             clustering_msg = f'识别了 {len(knowledge_clusters)} 个难点概念'
             yield f"data: {json.dumps({'stage': 'clustering', 'data': knowledge_clusters, 'message': clustering_msg})}\n\n"
@@ -487,10 +637,31 @@ async def analyze_page_stream(
             yield f"data: {json.dumps({'stage': 'understanding', 'data': '', 'message': '正在生成学习笔记...'})}\n\n"
             
             from src.agents.models import CheckResult
+            
+            # 构建全局上下文数据
+            global_outline = {}
+            knowledge_units = []
+            if global_analysis:
+                global_outline = {
+                    "main_topic": global_analysis.get("main_topic", ""),
+                    "chapters": global_analysis.get("chapters", []),
+                    "knowledge_flow": global_analysis.get("knowledge_flow", "")
+                }
+                # 转换knowledge_units格式
+                for unit in global_analysis.get("knowledge_units", []):
+                    from src.agents.models import KnowledgeUnit
+                    knowledge_units.append(KnowledgeUnit(
+                        unit_id=unit.get("unit_id", ""),
+                        title=unit.get("title", ""),
+                        pages=unit.get("pages", []),
+                        core_concepts=unit.get("core_concepts", []),
+                        raw_texts=[]
+                    ))
+            
             state = {
                 "ppt_texts": [request.content],
-                "global_outline": {},
-                "knowledge_units": [],
+                "global_outline": global_outline,
+                "knowledge_units": knowledge_units,
                 "current_unit_id": f"page_{request.page_id}",
                 "current_page_id": request.page_id,
                 "raw_text": request.content,

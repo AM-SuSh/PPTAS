@@ -37,11 +37,24 @@ class PersistenceService:
                     file_type TEXT,
                     file_hash TEXT UNIQUE,
                     slides_json TEXT,
+                    global_analysis_json TEXT,
                     created_at TEXT,
                     updated_at TEXT
                 )
                 """
             )
+            # 迁移：如果表已存在但没有 global_analysis_json 字段，则添加
+            try:
+                cursor = conn.execute("PRAGMA table_info(documents)")
+                columns = [row[1] for row in cursor.fetchall()]
+                if 'global_analysis_json' not in columns:
+                    print("🔄 检测到旧版数据库，添加 global_analysis_json 字段...")
+                    conn.execute("ALTER TABLE documents ADD COLUMN global_analysis_json TEXT")
+                    conn.commit()
+                    print("✅ 数据库迁移完成")
+            except Exception as e:
+                print(f"⚠️  数据库迁移检查失败: {e}")
+            
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS page_analysis (
@@ -74,25 +87,27 @@ class PersistenceService:
     def get_document_by_hash(self, file_hash: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT doc_id, file_name, file_type, file_hash, slides_json, created_at, updated_at FROM documents WHERE file_hash=?",
+                "SELECT doc_id, file_name, file_type, file_hash, slides_json, global_analysis_json, created_at, updated_at FROM documents WHERE file_hash=?",
                 (file_hash,),
             ).fetchone()
             if not row:
                 return None
             doc = dict(row)
             doc["slides"] = json.loads(doc["slides_json"]) if doc.get("slides_json") else []
+            doc["global_analysis"] = json.loads(doc["global_analysis_json"]) if doc.get("global_analysis_json") else None
             return doc
 
     def get_document_by_id(self, doc_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT doc_id, file_name, file_type, file_hash, slides_json, created_at, updated_at FROM documents WHERE doc_id=?",
+                "SELECT doc_id, file_name, file_type, file_hash, slides_json, global_analysis_json, created_at, updated_at FROM documents WHERE doc_id=?",
                 (doc_id,),
             ).fetchone()
             if not row:
                 return None
             doc = dict(row)
             doc["slides"] = json.loads(doc["slides_json"]) if doc.get("slides_json") else []
+            doc["global_analysis"] = json.loads(doc["global_analysis_json"]) if doc.get("global_analysis_json") else None
             return doc
 
     def upsert_document(
@@ -103,30 +118,58 @@ class PersistenceService:
         file_type: str,
         file_hash: str,
         slides: List[Dict[str, Any]],
+        global_analysis: Optional[Dict[str, Any]] = None,
     ) -> None:
         slides_json = json.dumps(slides, ensure_ascii=False)
+        global_analysis_json = json.dumps(global_analysis, ensure_ascii=False) if global_analysis else None
         now = self._now()
         with self._lock:
             with self._connect() as conn:
                 existing = conn.execute("SELECT doc_id FROM documents WHERE file_hash=?", (file_hash,)).fetchone()
                 if existing:
                     # keep existing doc_id stable for this hash
-                    conn.execute(
-                        """
-                        UPDATE documents
-                        SET file_name=?, file_type=?, slides_json=?, updated_at=?
-                        WHERE file_hash=?
-                        """,
-                        (file_name, file_type, slides_json, now, file_hash),
-                    )
+                    if global_analysis_json:
+                        conn.execute(
+                            """
+                            UPDATE documents
+                            SET file_name=?, file_type=?, slides_json=?, global_analysis_json=?, updated_at=?
+                            WHERE file_hash=?
+                            """,
+                            (file_name, file_type, slides_json, global_analysis_json, now, file_hash),
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE documents
+                            SET file_name=?, file_type=?, slides_json=?, updated_at=?
+                            WHERE file_hash=?
+                            """,
+                            (file_name, file_type, slides_json, now, file_hash),
+                        )
                 else:
                     conn.execute(
                         """
-                        INSERT INTO documents(doc_id, file_name, file_type, file_hash, slides_json, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO documents(doc_id, file_name, file_type, file_hash, slides_json, global_analysis_json, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (doc_id, file_name, file_type, file_hash, slides_json, now, now),
+                        (doc_id, file_name, file_type, file_hash, slides_json, global_analysis_json, now, now),
                     )
+                conn.commit()
+    
+    def update_global_analysis(self, doc_id: str, global_analysis: Dict[str, Any]) -> None:
+        """更新文档的全局分析结果"""
+        global_analysis_json = json.dumps(global_analysis, ensure_ascii=False)
+        now = self._now()
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE documents
+                    SET global_analysis_json=?, updated_at=?
+                    WHERE doc_id=?
+                    """,
+                    (global_analysis_json, now, doc_id),
+                )
                 conn.commit()
 
     def get_doc_id_by_hash(self, file_hash: str) -> Optional[str]:

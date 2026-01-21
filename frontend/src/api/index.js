@@ -43,6 +43,14 @@ export const pptApi = {
         })
     },
 
+    // 新增方法 - 全局文档分析
+    analyzeDocumentGlobal(docId, force = false) {
+        return service.post('/analyze-document-global', {
+            doc_id: docId,
+            force: force
+        })
+    },
+
     // 新增方法 - 流式深度分析（实时接收结果）
     async analyzePageStream(pageId, title, content, rawPoints, onChunk, docId = null, force = false) {
         try {

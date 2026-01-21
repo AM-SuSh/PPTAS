@@ -59,35 +59,108 @@ class GlobalStructureAgent:
     
     def run(self, state: GraphState) -> GraphState:
         """执行全局结构解析"""
-        # 简化 prompt: 只提取关键信息
-        template = """分析PPT的整体结构,提取核心知识框架。
+        # 改进的 prompt: 更明确的要求
+        template = """你是一个教育专家，需要分析这份PPT/PDF文档的整体结构和知识框架。
 
-PPT内容:
+文档内容（共{total_pages}页）:
 {ppt_texts}
 
-以JSON格式输出(仅包含必要信息):
+请仔细分析整个文档，提取以下信息：
+
+1. **主题**：整个文档的核心主题是什么？
+2. **章节结构**：文档分为哪些主要章节？每个章节包含哪些页面？
+3. **知识逻辑流程**：这些章节之间的知识逻辑关系是什么？
+
+请以JSON格式输出，格式如下：
 {{
-  "main_topic": "主题",
+  "main_topic": "文档的核心主题（必须填写，不能为空）",
   "chapters": [
-    {{"title": "章节名", "pages": [1,2,3], "key_concepts": ["概念A", "概念B"]}}
+    {{
+      "title": "章节标题",
+      "pages": [页码列表，例如[1,2,3]],
+      "key_concepts": ["核心概念1", "核心概念2"]
+    }}
   ],
-  "knowledge_flow": "简述知识逻辑流程(50字内)"
+  "knowledge_flow": "知识逻辑流程的简要描述（50字内）"
 }}
+
+重要要求：
+- main_topic 必须填写，不能为空或"未知"
+- 至少识别1-3个主要章节
+- 只返回JSON，不要其他文字说明
 """
         prompt = ChatPromptTemplate.from_template(template)
         chain = prompt | self.llm
         
-        # 只传递关键文本,减少token消耗
-        ppt_summary = "\n".join([
-            f"P{i+1}: {text[:200]}" for i, text in enumerate(state["ppt_texts"])
-        ])
+        # 改进：传递更多文本内容，但限制总长度
+        ppt_texts = state["ppt_texts"]
+        total_pages = len(ppt_texts)
         
-        response = chain.invoke({"ppt_texts": ppt_summary})
+        # 如果页数太多，只取前几页和后几页，以及中间几页的摘要
+        if total_pages > 20:
+            # 取前5页、后5页，中间每5页取1页
+            selected_indices = list(range(min(5, total_pages)))
+            for i in range(5, total_pages - 5, 5):
+                selected_indices.append(i)
+            selected_indices.extend(range(max(total_pages - 5, 5), total_pages))
+            selected_texts = [ppt_texts[i] for i in selected_indices if i < len(ppt_texts)]
+            ppt_summary = "\n\n".join([
+                f"第{i+1}页:\n{text[:500]}" for i, text in enumerate(selected_texts)
+            ])
+            ppt_summary += f"\n\n[注：文档共{total_pages}页，此处显示了{len(selected_texts)}页的内容]"
+        else:
+            # 页数不多，传递所有内容，但每页限制长度
+            ppt_summary = "\n\n".join([
+                f"第{i+1}页:\n{text[:800]}" for i, text in enumerate(ppt_texts)
+            ])
+        
+        print(f"📝 发送给LLM的文本长度: {len(ppt_summary)} 字符")
+        response = chain.invoke({"ppt_texts": ppt_summary, "total_pages": total_pages})
+        
+        print(f"📥 LLM返回的原始内容: {response.content[:500]}...")
         
         try:
-            result = json.loads(response.content)
-        except:
+            # 尝试提取JSON（可能包含markdown代码块）
+            content = response.content.strip()
+            # 如果包含```json，提取其中的内容
+            if "```json" in content:
+                start = content.find("```json") + 7
+                end = content.find("```", start)
+                if end > start:
+                    content = content[start:end].strip()
+            elif "```" in content:
+                start = content.find("```") + 3
+                end = content.find("```", start)
+                if end > start:
+                    content = content[start:end].strip()
+            
+            result = json.loads(content)
+            
+            # 验证结果
+            if not result.get("main_topic") or result.get("main_topic") == "未知":
+                print("⚠️  LLM返回的主题为空或'未知'，尝试从内容推断...")
+                # 尝试从第一页标题推断主题
+                if ppt_texts and len(ppt_texts) > 0:
+                    first_page = ppt_texts[0]
+                    if "标题:" in first_page:
+                        inferred_topic = first_page.split("标题:")[1].split("\n")[0].strip()
+                        if inferred_topic:
+                            result["main_topic"] = inferred_topic
+                            print(f"✅ 从第一页标题推断主题: {inferred_topic}")
+            
+            print(f"✅ 解析成功: 主题={result.get('main_topic', '未知')}, 章节数={len(result.get('chapters', []))}")
+        except Exception as e:
+            print(f"❌ JSON解析失败: {e}")
+            print(f"   原始内容: {response.content[:500]}")
+            # 尝试从内容推断基本信息
             result = {"main_topic": "未知", "chapters": [], "knowledge_flow": ""}
+            if ppt_texts and len(ppt_texts) > 0:
+                first_page = ppt_texts[0]
+                if "标题:" in first_page:
+                    inferred_topic = first_page.split("标题:")[1].split("\n")[0].strip()
+                    if inferred_topic:
+                        result["main_topic"] = inferred_topic
+                        print(f"✅ 从第一页标题推断主题: {inferred_topic}")
         
         state["global_outline"] = result
         return state
@@ -102,56 +175,131 @@ class KnowledgeClusteringAgent:
     
     def run(self, state: GraphState) -> GraphState:
         """执行知识点聚类 - 从全局视角"""
-        # 优化: 明确目标是帮助学生理解
-        template = """你是学习助手,目标是帮助学生更好理解这份PPT。
+        # 改进的 prompt: 更明确的要求和更好的格式
+        global_outline = state.get("global_outline", {})
+        main_topic = global_outline.get("main_topic", "未知")
+        
+        template = """你是学习专家，需要从整个PPT/PDF文档中提取核心知识点。
 
-全局结构:
+文档主题: {main_topic}
+
+文档结构:
 {global_outline}
 
-PPT完整内容:
+文档内容（共{total_pages}页）:
 {ppt_texts}
 
-任务: 从整个PPT中提取需要补充说明的知识点
+任务: 从整个文档中提取核心知识点单元
 要求:
-1. 识别学生可能不理解的核心概念
-2. 找出需要背景知识的内容
-3. 标注需要示例说明的抽象概念
+1. 识别文档中最重要的核心概念（至少5个）
+2. 每个知识点应该：
+   - 有明确的名称
+   - 标注涉及的页码
+   - 说明为什么学生可能不理解
+   - 指出需要补充什么内容
 
-输出JSON数组(每个知识点):
+输出JSON数组，格式如下:
 [
   {{
-    "concept": "概念名称",
-    "pages": [涉及页码],
-    "why_difficult": "为什么学生可能不理解(20字内)",
-    "补充方向": "需要补充什么(例如:原理/示例/背景)"
+    "concept": "概念名称（必须填写）",
+    "pages": [页码列表，例如[1,2,3]],
+    "why_difficult": "为什么学生可能不理解（20字内）",
+    "补充方向": "需要补充什么（例如:原理/示例/背景/公式推导）"
   }}
 ]
 
-限制: 最多提取10个最关键的知识点
+重要要求:
+- 必须至少提取5个核心知识点
+- concept字段不能为空
+- pages字段必须是数字数组
+- 只返回JSON数组，不要其他文字说明
 """
         prompt = ChatPromptTemplate.from_template(template)
         chain = prompt | self.llm
         
+        # 改进：如果页数太多，使用摘要
+        ppt_texts = state["ppt_texts"]
+        total_pages = len(ppt_texts)
+        
+        if total_pages > 15:
+            # 使用摘要：每页取前500字符
+            ppt_summary = "\n\n".join([
+                f"第{i+1}页:\n{text[:500]}..." for i, text in enumerate(ppt_texts)
+            ])
+        else:
+            # 页数不多，传递完整内容
+            ppt_summary = "\n\n".join([
+                f"第{i+1}页:\n{text[:1000]}" for i, text in enumerate(ppt_texts)
+            ])
+        
+        print(f"📝 发送给LLM的文本长度: {len(ppt_summary)} 字符")
         response = chain.invoke({
-            "global_outline": json.dumps(state["global_outline"], ensure_ascii=False),
-            "ppt_texts": "\n\n".join([f"第{i+1}页:\n{text}" for i, text in enumerate(state["ppt_texts"])])
+            "main_topic": main_topic,
+            "global_outline": json.dumps(global_outline, ensure_ascii=False, indent=2),
+            "ppt_texts": ppt_summary,
+            "total_pages": total_pages
         })
         
+        print(f"📥 LLM返回的原始内容: {response.content[:500]}...")
+        
         try:
-            concepts_data = json.loads(response.content)
+            # 尝试提取JSON
+            content = response.content.strip()
+            # 如果包含```json，提取其中的内容
+            if "```json" in content:
+                start = content.find("```json") + 7
+                end = content.find("```", start)
+                if end > start:
+                    content = content[start:end].strip()
+            elif "```" in content:
+                start = content.find("```") + 3
+                end = content.find("```", start)
+                if end > start:
+                    content = content[start:end].strip()
+            
+            concepts_data = json.loads(content)
+            
+            # 验证和过滤
+            valid_concepts = []
+            for concept in concepts_data:
+                if concept.get("concept") and concept.get("concept").strip():
+                    # 确保pages是列表
+                    pages = concept.get("pages", [])
+                    if not isinstance(pages, list):
+                        pages = []
+                    valid_concepts.append({
+                        "concept": concept.get("concept", "").strip(),
+                        "pages": pages,
+                        "why_difficult": concept.get("why_difficult", ""),
+                        "补充方向": concept.get("补充方向", "")
+                    })
+            
+            print(f"✅ 解析成功: 提取到 {len(valid_concepts)} 个有效知识点")
+            
             # 转换为 KnowledgeUnit 格式
             knowledge_units = []
-            for i, concept in enumerate(concepts_data[:10]):  # 限制最多10个
+            for i, concept in enumerate(valid_concepts[:15]):  # 最多15个
+                pages = concept.get("pages", [])
+                # 确保页码有效
+                valid_pages = [p for p in pages if isinstance(p, int) and 0 < p <= total_pages]
+                if not valid_pages:
+                    # 如果没有有效页码，尝试从概念名称推断
+                    # 这里可以添加更智能的推断逻辑
+                    valid_pages = []
+                
                 knowledge_units.append(KnowledgeUnit(
                     unit_id=f"unit_{i+1}",
                     title=concept.get("concept", ""),
-                    pages=concept.get("pages", []),
+                    pages=valid_pages,
                     core_concepts=[concept.get("concept", "")],
-                    raw_texts=[state["ppt_texts"][p-1] for p in concept.get("pages", []) if 0 < p <= len(state["ppt_texts"])]
+                    raw_texts=[state["ppt_texts"][p-1] for p in valid_pages if 0 < p <= len(state["ppt_texts"])]
                 ))
-        except:
+        except Exception as e:
+            print(f"❌ JSON解析失败: {e}")
+            print(f"   原始内容: {response.content[:500]}")
             knowledge_units = []
         
+        print(f"✅ 最终生成 {len(knowledge_units)} 个知识点单元")
         state["knowledge_units"] = knowledge_units
         return state
 
@@ -164,9 +312,62 @@ class StructureUnderstandingAgent:
         self.llm = llm_config.create_llm(temperature=0.5)
     
     def run(self, state: GraphState) -> GraphState:
-        """执行结构语义理解和笔记生成"""
-        # 生成学生理解笔记
-        template = """根据以下内容，为学生生成结构化学习笔记(Markdown格式，300字内):
+        """执行结构语义理解和笔记生成（基于全局上下文）"""
+        # 检查是否有全局上下文
+        has_global_context = state.get("global_outline") and state.get("knowledge_units")
+        
+        if has_global_context:
+            # 有全局上下文时，使用增强的prompt
+            template = """基于整个文档的全局分析结果，为学生生成结构化学习笔记(Markdown格式，300字内):
+
+文档全局信息:
+- 主题: {main_topic}
+- 知识逻辑流程: {knowledge_flow}
+- 当前页面在全局知识体系中的位置: {page_context}
+
+当前页面内容: {raw_text}
+
+笔记格式:
+## [页面主题]
+
+### 核心概念
+- 概念1: 简要说明（结合全局知识框架）
+- 概念2: 简要说明
+
+### 关键要点
+- 要点1
+- 要点2
+
+### 重点理解
+[简洁的理解要点，说明在当前页面在整个文档知识体系中的位置]
+
+要求:
+- 结合全局知识框架，突出最重要的概念
+- 说明当前页面与整体知识体系的关系
+- 标注学生应该掌握的要点
+- 适合快速复习
+"""
+            # 构建页面上下文信息
+            page_id = state.get("current_page_id", 0)
+            page_context = f"第{page_id}页"
+            if state.get("global_outline", {}).get("chapters"):
+                for chapter in state["global_outline"]["chapters"]:
+                    if page_id in chapter.get("pages", []):
+                        page_context = f"第{page_id}页，属于章节：{chapter.get('title', '')}"
+                        break
+            
+            prompt = ChatPromptTemplate.from_template(template)
+            chain = prompt | self.llm
+            
+            response = chain.invoke({
+                "main_topic": state.get("global_outline", {}).get("main_topic", "未知"),
+                "knowledge_flow": state.get("global_outline", {}).get("knowledge_flow", ""),
+                "page_context": page_context,
+                "raw_text": state["raw_text"][:1000]
+            })
+        else:
+            # 没有全局上下文时，使用原始prompt
+            template = """根据以下内容，为学生生成结构化学习笔记(Markdown格式，300字内):
 
 内容: {raw_text}
 
@@ -189,10 +390,10 @@ class StructureUnderstandingAgent:
 - 标注学生应该掌握的要点
 - 适合快速复习
 """
-        prompt = ChatPromptTemplate.from_template(template)
-        chain = prompt | self.llm
-        
-        response = chain.invoke({"raw_text": state["raw_text"][:1000]})  # 限制输入长度
+            prompt = ChatPromptTemplate.from_template(template)
+            chain = prompt | self.llm
+            
+            response = chain.invoke({"raw_text": state["raw_text"][:1000]})  # 限制输入长度
         
         # 生成学习笔记
         understanding_notes = response.content
@@ -248,9 +449,63 @@ class GapIdentificationAgent:
         self.llm = llm_config.create_llm(temperature=0.2)
     
     def run(self, state: GraphState) -> GraphState:
-        """识别知识缺口"""
-        # 优化: 聚焦学生理解需求
-        template = """你是教学助手,识别学生理解这段内容的障碍点。
+        """识别知识缺口（基于全局上下文）"""
+        # 检查是否有全局上下文
+        has_global_context = state.get("global_outline") and state.get("knowledge_units")
+        
+        if has_global_context:
+            # 有全局上下文时，使用增强的prompt
+            template = """你是教学助手,基于整个文档的全局分析结果,识别学生理解当前页面内容的障碍点。
+
+文档全局信息:
+- 主题: {main_topic}
+- 知识逻辑流程: {knowledge_flow}
+- 全局知识点单元: {knowledge_units}
+
+当前页面内容: {raw_text}
+
+任务: 结合全局知识框架,识别当前页面中学生可能缺少的知识
+要求:
+1. 参考全局知识点单元,识别当前页面涉及的概念
+2. 考虑概念在整个文档知识体系中的位置
+3. 识别学生可能缺少的背景知识或前置知识
+
+识别(JSON数组,最多5个):
+[
+  {{
+    "concept": "概念",
+    "gap_type": "缺少什么(选一个: 直观解释/应用示例/背景知识/公式推导/前置知识)",
+    "priority": 优先级1-5,
+    "global_relation": "在全局知识框架中的位置(可选)"
+  }}
+]
+
+原则:
+- 结合全局知识框架，只标注真正影响理解的缺口
+- 优先级高的是必须补充的
+- 考虑概念在整个文档中的位置和关系
+- 不要过度延伸
+"""
+            # 格式化全局知识点单元
+            knowledge_units_str = ""
+            if state.get("knowledge_units"):
+                for unit in state["knowledge_units"][:10]:  # 最多显示10个
+                    pages_str = ",".join(map(str, unit.pages))
+                    concepts_str = ",".join(unit.core_concepts)
+                    knowledge_units_str += f"- {unit.title} (页码: {pages_str}, 核心概念: {concepts_str})\n"
+            
+            prompt = ChatPromptTemplate.from_template(template)
+            chain = prompt | self.llm
+            
+            response = chain.invoke({
+                "main_topic": state.get("global_outline", {}).get("main_topic", "未知"),
+                "knowledge_flow": state.get("global_outline", {}).get("knowledge_flow", ""),
+                "knowledge_units": knowledge_units_str or "无",
+                "raw_text": state["raw_text"][:800]
+            })
+        else:
+            # 没有全局上下文时，使用原始prompt
+            template = """你是教学助手,识别学生理解这段内容的障碍点。
 
 内容: {raw_text}
 
@@ -268,10 +523,10 @@ class GapIdentificationAgent:
 - 优先级高的是必须补充的
 - 不要过度延伸
 """
-        prompt = ChatPromptTemplate.from_template(template)
-        chain = prompt | self.llm
-        
-        response = chain.invoke({"raw_text": state["raw_text"][:800]})
+            prompt = ChatPromptTemplate.from_template(template)
+            chain = prompt | self.llm
+            
+            response = chain.invoke({"raw_text": state["raw_text"][:800]})
         
         try:
             gaps_data = json.loads(response.content)

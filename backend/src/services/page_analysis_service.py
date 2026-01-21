@@ -23,14 +23,69 @@ from ..agents.models import CheckResult
 
 
 class PageKnowledgeClusterer:
-    """单页面知识聚类 - 针对学生理解难度分析"""
+    """单页面知识聚类 - 针对学生理解难度分析（基于全局上下文）"""
     
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0.3)
     
-    def run(self, raw_text: str) -> List[Dict[str, Any]]:
-        """分析单页面中学生可能有难度的概念"""
-        template = """作为学习专家,分析以下内容中学生可能有理解难度的概念。
+    def run(self, raw_text: str, global_context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """分析单页面中学生可能有难度的概念
+        
+        Args:
+            raw_text: 当前页面的文本内容
+            global_context: 全局分析结果，包含主题、知识点框架等
+        """
+        if global_context:
+            # 有全局上下文时，使用增强的prompt
+            template = """作为学习专家,基于整个文档的全局分析结果,分析当前页面中学生可能有理解难度的概念。
+
+文档全局信息:
+- 主题: {main_topic}
+- 知识逻辑流程: {knowledge_flow}
+- 全局知识点单元: {knowledge_units}
+
+当前页面内容:
+{content}
+
+任务: 结合全局知识框架,识别当前页面中难以理解的概念
+要求:
+1. 参考全局知识点单元,识别当前页面涉及的核心概念
+2. 考虑概念在整个文档知识体系中的位置
+3. 识别学生可能不理解的原因
+
+识别难以理解的概念(JSON格式,最多10个):
+[
+  {{
+    "concept": "概念名称",
+    "difficulty_level": 难度1-5,
+    "why_difficult": "为什么难理解(50字内)",
+    "related_concepts": ["相关概念1", "相关概念2"],
+    "global_context": "在全局知识框架中的位置(可选)"
+  }}
+]
+
+只返回JSON数组。
+"""
+            # 格式化全局知识点单元
+            knowledge_units_str = ""
+            if global_context.get("knowledge_units"):
+                for unit in global_context["knowledge_units"][:10]:  # 最多显示10个
+                    pages_str = ",".join(map(str, unit.get("pages", [])))
+                    concepts_str = ",".join(unit.get("core_concepts", []))
+                    knowledge_units_str += f"- {unit.get('title', '')} (页码: {pages_str}, 核心概念: {concepts_str})\n"
+            
+            prompt = ChatPromptTemplate.from_template(template)
+            chain = prompt | self.llm
+            
+            response = chain.invoke({
+                "main_topic": global_context.get("main_topic", "未知"),
+                "knowledge_flow": global_context.get("knowledge_flow", ""),
+                "knowledge_units": knowledge_units_str or "无",
+                "content": raw_text[:1500]
+            })
+        else:
+            # 没有全局上下文时，使用原始prompt
+            template = """作为学习专家,分析以下内容中学生可能有理解难度的概念。
 
 内容:
 {content}
@@ -47,10 +102,10 @@ class PageKnowledgeClusterer:
 
 只返回JSON数组。
 """
-        prompt = ChatPromptTemplate.from_template(template)
-        chain = prompt | self.llm
-        
-        response = chain.invoke({"content": raw_text[:1500]})  # 限制输入长度
+            prompt = ChatPromptTemplate.from_template(template)
+            chain = prompt | self.llm
+            
+            response = chain.invoke({"content": raw_text[:1500]})
         
         try:
             clusters_data = json.loads(response.content)

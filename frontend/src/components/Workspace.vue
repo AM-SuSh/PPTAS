@@ -18,6 +18,8 @@ const activeTool = ref('explain')
 const isAnalyzing = ref(false)
 const analysisCache = ref({})  // 缓存分析结果
 const hasPreloaded = ref(false)
+const isAnalyzingGlobal = ref(false)  // 全局分析是否正在进行
+const globalAnalysisResult = ref(null)  // 全局分析结果
 
 const currentSlide = computed(() => props.slides[currentSlideIndex.value])
 
@@ -210,7 +212,27 @@ const preloadCachedAnalyses = async () => {
   }
   console.log('📦 开始预加载缓存分析，docId:', props.docId, 'slides数量:', props.slides?.length)
   try {
-    // 先尝试获取已保存的分析
+    // 步骤1: 先进行全局分析（如果还没有）
+    console.log('🌐 开始全局文档分析...')
+    try {
+      const globalRes = await pptApi.analyzeDocumentGlobal(props.docId)
+      if (globalRes.data?.success) {
+        globalAnalysisResult.value = globalRes.data.global_analysis
+        if (globalRes.data.cached) {
+          console.log('♻️  全局分析已存在，直接使用')
+        } else {
+          console.log('✅ 全局分析完成:', {
+            main_topic: globalRes.data.global_analysis?.main_topic,
+            knowledge_units: globalRes.data.global_analysis?.knowledge_units?.length || 0
+          })
+        }
+      }
+    } catch (globalErr) {
+      console.warn('⚠️ 全局分析失败（非致命错误）:', globalErr.message)
+      // 全局分析失败不影响后续流程
+    }
+    
+    // 步骤2: 获取已保存的页面分析
     const res = await pptApi.getAllPageAnalysis(props.docId)
     const data = res.data?.data || {}
     console.log('📊 获取到已保存分析:', Object.keys(data).length, '页')
@@ -278,6 +300,46 @@ const preloadCachedAnalyses = async () => {
 const handleToolChange = (toolName) => {
   activeTool.value = toolName
 }
+
+// 触发全局分析
+const triggerGlobalAnalysis = async (force = false) => {
+  if (!props.docId) {
+    console.warn('⚠️ docId 为空，无法进行全局分析')
+    return
+  }
+  
+  try {
+    isAnalyzingGlobal.value = true
+    console.log(`🌐 开始${force ? '强制重新' : ''}全局分析，docId:`, props.docId)
+    
+    const res = await pptApi.analyzeDocumentGlobal(props.docId, force)
+    
+    if (res.data?.success) {
+      globalAnalysisResult.value = res.data.global_analysis
+      console.log('✅ 全局分析完成:', {
+        main_topic: res.data.global_analysis?.main_topic,
+        knowledge_units: res.data.global_analysis?.knowledge_units?.length || 0,
+        cached: res.data.cached
+      })
+      
+      // 显示成功提示
+      if (force) {
+        alert(`✅ 全局分析重新完成！\n主题: ${res.data.global_analysis?.main_topic || '未知'}\n知识点单元: ${res.data.global_analysis?.knowledge_units?.length || 0} 个`)
+      } else {
+        if (res.data.cached) {
+          console.log('♻️  使用了缓存的全局分析结果')
+        } else {
+          alert(`✅ 全局分析完成！\n主题: ${res.data.global_analysis?.main_topic || '未知'}\n知识点单元: ${res.data.global_analysis?.knowledge_units?.length || 0} 个`)
+        }
+      }
+    }
+  } catch (err) {
+    console.error('❌ 全局分析失败:', err)
+    alert(`❌ 全局分析失败: ${err.response?.data?.detail || err.message || '未知错误'}`)
+  } finally {
+    isAnalyzingGlobal.value = false
+  }
+}
 </script>
 
 <template>
@@ -292,6 +354,39 @@ const handleToolChange = (toolName) => {
       </div>
 
       <div class="right-panel">
+        <!-- 全局分析按钮 -->
+        <div v-if="props.docId" class="global-analysis-bar">
+          <div class="global-analysis-info">
+            <span class="info-label">📚 文档全局分析:</span>
+            <span v-if="globalAnalysisResult" class="info-value">
+              {{ globalAnalysisResult.main_topic || '未知主题' }} 
+              ({{ globalAnalysisResult.knowledge_units?.length || 0 }} 个知识点)
+            </span>
+            <span v-else class="info-value">未分析</span>
+          </div>
+          <button 
+            @click="triggerGlobalAnalysis(false)"
+            :disabled="isAnalyzingGlobal"
+            class="btn-global-analyze"
+            title="进行全局分析，获取文档主题和知识点框架"
+          >
+            <span v-if="isAnalyzingGlobal" class="analyzing-spinner">⏳</span>
+            <span v-else>🌐</span>
+            {{ isAnalyzingGlobal ? '分析中...' : '全局分析' }}
+          </button>
+          <button 
+            v-if="globalAnalysisResult"
+            @click="triggerGlobalAnalysis(true)"
+            :disabled="isAnalyzingGlobal"
+            class="btn-global-reanalyze"
+            title="强制重新进行全局分析"
+          >
+            <span v-if="isAnalyzingGlobal" class="analyzing-spinner">⏳</span>
+            <span v-else>🔄</span>
+            {{ isAnalyzingGlobal ? '重新分析中...' : '重新分析' }}
+          </button>
+        </div>
+        
         <!-- 内容展示 -->
         <ContentView
           :slide="currentSlide"
@@ -396,5 +491,89 @@ const handleToolChange = (toolName) => {
   font-size: 1rem;
   color: #666;
   margin: 0;
+}
+
+/* 全局分析按钮栏 */
+.global-analysis-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.global-analysis-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.info-label {
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.info-value {
+  font-weight: 500;
+  opacity: 0.95;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.btn-global-analyze,
+.btn-global-reanalyze {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.btn-global-analyze {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.btn-global-analyze:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.35);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.btn-global-reanalyze {
+  background: rgba(255, 193, 7, 0.9);
+  color: #333;
+  border: 1px solid rgba(255, 193, 7, 1);
+}
+
+.btn-global-reanalyze:hover:not(:disabled) {
+  background: rgba(255, 193, 7, 1);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(255, 193, 7, 0.4);
+}
+
+.btn-global-analyze:disabled,
+.btn-global-reanalyze:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.analyzing-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
 }
 </style>
