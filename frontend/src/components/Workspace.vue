@@ -470,8 +470,8 @@ const toggleExportOptions = () => {
       </div>
 
       <div class="right-panel">
-        <!-- 全局分析按钮 -->
-        <div v-if="props.docId" class="global-analysis-bar">
+        <!-- 全局分析按钮 - 只在深度分析工具激活时显示 -->
+        <div v-if="props.docId && activeTool === 'explain'" class="global-analysis-bar">
           <div class="global-analysis-info">
             <span class="info-label">📚 文档全局分析:</span>
             <span v-if="globalAnalysisResult" class="info-value">
@@ -537,16 +537,18 @@ const toggleExportOptions = () => {
         </div>
         
         <!-- 内容展示 -->
-        <ContentView
-          :slide="currentSlide"
-          :active-tool="activeTool"
-          :mindmap="mindmap"
-          :mindmap-loading="mindmapLoading"
-          :mindmap-error="mindmapError"
-          :is-analyzing="isAnalyzing"
-          :doc-id="props.docId"
-          @select-slide="selectSlide"
-        />
+        <div class="content-wrapper">
+          <ContentView
+            :slide="currentSlide"
+            :active-tool="activeTool"
+            :mindmap="mindmap"
+            :mindmap-loading="mindmapLoading"
+            :mindmap-error="mindmapError"
+            :is-analyzing="isAnalyzing"
+            :doc-id="props.docId"
+            @select-slide="selectSlide"
+          />
+        </div>
         
         <!-- 加载状态浮层 -->
         <div v-if="isAnalyzing" class="loading-overlay">
@@ -602,9 +604,11 @@ const toggleExportOptions = () => {
 .right-panel {
   width: 60%;
   background: #ffffff;
-  overflow-y: auto;
+  overflow: hidden;
   position: relative;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .loading-overlay {
@@ -652,6 +656,7 @@ const toggleExportOptions = () => {
   color: white;
   border-bottom: 1px solid rgba(255, 255, 255, 0.2);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
 }
 
 .global-analysis-info {
@@ -794,5 +799,21 @@ const toggleExportOptions = () => {
   font-weight: normal;
   color: #666;
   margin-top: 4px;
+}
+
+/* 内容包装器 - 解决双重滚动条问题 */
+.content-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+/* 覆盖 ContentView 的滚动 */
+.content-wrapper :deep(.content-view) {
+  height: auto;
+  overflow-y: visible;
+  overflow-x: visible;
+  min-height: 100%;
 }
 </style>
