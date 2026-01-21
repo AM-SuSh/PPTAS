@@ -79,13 +79,22 @@ export const pptApi = {
 
     // 新增方法 - 检查后端健康状态
     checkHealth() {
-        return service.get('/health')
+        return service.get('/health', {
+            timeout: 3000  // 后端检查最多等待 3 秒
+        })
+    },
+
+    // 新增方法 - 联合检查后端和 LLM 连接
+    checkHealthComplete() {
+        return service.get('/health/complete', {
+            timeout: 8000  // 联合检查最多等待 8 秒
+        })
     },
 
     // 新增方法 - 检查 LLM 连接（使用更短超时）
     checkLLMConnection() {
         return service.get('/health/llm', {
-            timeout: 10000  // LLM 检查最多等待 10 秒
+            timeout: 5000  // LLM 检查最多等待 5 秒
         })
     },
 

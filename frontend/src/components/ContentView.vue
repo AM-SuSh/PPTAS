@@ -209,96 +209,89 @@ const handleSearch = () => {
   }, 1000)
 }
 
-// 检查后端连接
-const checkBackendConnection = async () => {
+// 联合检查后端和 LLM 连接
+const checkSystemConnection = async () => {
   try {
-    const response = await pptApi.checkHealth()
-    if (response.status === 200) {
-      alert('✅ 后端连接正常！\n\n版本: ' + response.data.version + '\n状态: ' + response.data.status)
-    }
-  } catch (error) {
-    alert('❌ 后端连接失败！\n\n请确保：\n1. 后端服务已启动 (uvicorn main:app --reload)\n2. 服务地址为 http://localhost:8000\n3. 防火墙未阻止连接\n\n错误信息：' + error.message)
-  }
-}
-
-// 检查 LLM 连接
-const checkLLMConnection = async () => {
-  try {
-    const response = await pptApi.checkLLMConnection()
+    const response = await pptApi.checkHealthComplete()
     const data = response.data
     
-    console.log('📊 LLM Health Check Response:', data)
+    console.log('📊 系统连接检查结果:', data)
     
-    // 后端返回 status === 'ok' 表示成功
-    if (data.status === 'ok') {
-      alert('✅ LLM 连接正常！\n\n模型: ' + data.model + '\n示例回复: ' + data.response_preview)
-    } else if (data.status === 'error') {
-      // 后端明确返回了错误状态
-      let errorMsg = '❌ LLM 连接失败\n\n'
-      errorMsg += '消息: ' + (data.message || '未知错误') + '\n'
-      if (data.detail) errorMsg += '详情: ' + data.detail + '\n'
-      errorMsg += '\n解决方案：\n'
-      
-      if (!data.configured) {
-        errorMsg += '1. 检查 config.json 中的 api_key 是否正确配置\n'
-        errorMsg += '2. 确认 API Key 有效期未过期\n'
-        errorMsg += '3. 检查网络连接是否正常'
-      } else {
-        errorMsg += '1. 检查 API Key 是否有效\n'
-        errorMsg += '2. 确认 API 配额未超限\n'
-        errorMsg += '3. 检查选择的模型是否可用\n'
-        errorMsg += '4. 尝试更换模型测试\n'
-        errorMsg += '5. 查看后端日志获取详细错误信息'
-      }
-      
-      alert(errorMsg)
+    const backend = data.backend || {}
+    const llm = data.llm || {}
+    
+    let message = '🔗 系统连接诊断结果\n\n'
+    message += '═════════════════════════════════════\n'
+    
+    // 后端状态
+    message += '🖥️  后端服务:\n'
+    if (backend.status === 'ok') {
+      message += `   ✅ 状态: 正常\n`
+      message += `   版本: ${backend.version}\n`
     } else {
-      // 意外的状态码
-      alert('❌ LLM 检查失败\n\n意外状态: ' + data.status + '\n响应: ' + JSON.stringify(data))
+      message += `   ❌ 状态: ${backend.status || '未知'}\n`
+      message += `   消息: ${backend.message || '无'}\n`
     }
+    
+    message += '\n'
+    
+    // LLM 状态
+    message += '🤖 LLM 服务:\n'
+    if (llm.status === 'ok') {
+      message += `   ✅ 状态: 连接正常\n`
+      message += `   模型: ${llm.model}\n`
+      message += `   信息: ${llm.response_preview || '就绪'}\n`
+    } else if (llm.status === 'warning') {
+      message += `   ⚠️  状态: 警告\n`
+      message += `   模型: ${llm.model}\n`
+      message += `   消息: ${llm.message || '未知'}\n`
+      message += `   状态码: ${llm.response_preview || '未知'}\n`
+    } else {
+      message += `   ❌ 状态: ${llm.status || '未知'}\n`
+      message += `   模型: ${llm.model}\n`
+      message += `   消息: ${llm.message || '连接失败'}\n`
+      message += `   详情: ${llm.response_preview || llm.detail || '无'}\n`
+      
+      // 添加解决建议
+      if (!llm.configured) {
+        message += '\n💡 解决方案：\n'
+        message += '   1. 检查 config.json 中的 api_key 配置\n'
+        message += '   2. 确认 API Key 有效期\n'
+        message += '   3. 检查网络连接'
+      } else if (llm.message && llm.message.includes('无法连接')) {
+        message += '\n💡 解决方案：\n'
+        message += '   1. 检查网络连接\n'
+        message += '   2. 检查代理设置\n'
+        message += '   3. 确认 base_url 配置正确'
+      }
+    }
+    
+    message += '\n═════════════════════════════════════'
+    
+    alert(message)
   } catch (error) {
-    let errorMsg = '❌ LLM 检查失败\n\n'
+    let errorMsg = '❌ 系统连接检查失败\n\n'
     
     if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-      // 准确的超时时间：10秒（来自 api/index.js 的 health/llm 端点配置）
-      errorMsg += '原因: 请求超时（10秒）\n\n'
-      errorMsg += '这通常表示：\n'
-      errorMsg += '1. LLM 服务响应缓慢或无响应\n'
-      errorMsg += '2. API Key 无效或过期\n'
-      errorMsg += '3. 网络连接不稳定\n'
-      errorMsg += '4. 后端服务未启动\n\n'
-      errorMsg += '建议：\n'
-      errorMsg += '• 检查后端服务是否运行: uvicorn main:app\n'
-      errorMsg += '• 检查 config.json 中的 API Key\n'
-      errorMsg += '• 确认 base_url 是否正确\n'
-      errorMsg += '• 查看后端日志确认具体错误'
+      errorMsg += '原因: 请求超时\n\n'
+      errorMsg += '请检查：\n'
+      errorMsg += '• 后端服务是否运行\n'
+      errorMsg += '• 网络连接是否正常\n'
+      errorMsg += '• 防火墙设置'
     } else if (error.response) {
-      // 后端返回了错误响应（如 500、503）
-      errorMsg += '原因: 后端返回错误 (HTTP ' + error.response.status + ')\n\n'
-      if (error.response.data?.detail) {
-        errorMsg += '详情: ' + error.response.data.detail
-      } else if (error.response.data?.error) {
-        errorMsg += '错误: ' + error.response.data.error
-      } else {
-        errorMsg += '请检查后端日志'
-      }
-    } else if (error.request && !error.response) {
-      // 发送了请求但没有收到响应
+      errorMsg += `原因: 后端返回错误 (HTTP ${error.response.status})\n\n`
+      errorMsg += '请检查后端日志'
+    } else if (!error.response) {
       errorMsg += '原因: 无法连接到后端\n\n'
       errorMsg += '请检查：\n'
-      errorMsg += '1. 后端服务是否运行\n'
-      errorMsg += '2. 服务地址是否正确 (http://localhost:8000)\n'
-      errorMsg += '3. 网络连接是否正常\n'
-      errorMsg += '4. 防火墙是否阻止连接'
+      errorMsg += '• 后端服务是否启动\n'
+      errorMsg += '• 地址是否为 http://localhost:8000\n'
+      errorMsg += '• 网络连接是否正常'
     } else {
-      // 其他错误
-      errorMsg += '原因: ' + error.message + '\n\n'
-      errorMsg += '请检查：\n'
-      errorMsg += '1. 网络连接\n'
-      errorMsg += '2. 浏览器控制台错误日志'
+      errorMsg += '原因: ' + error.message
     }
     
-    console.error('❌ LLM Health Check Error:', error)
+    console.error('❌ 系统连接检查错误:', error)
     alert(errorMsg)
   }
 }
@@ -621,9 +614,6 @@ const formatTime = (timestamp) => {
                       或浏览器访问该地址
                     </span>
                   </div>
-                  <div class="connection-item check-method">
-                    <button class="check-btn" @click="checkBackendConnection">🔍 检查后端连接</button>
-                  </div>
                 </div>
 
                 <!-- LLM连接状态 -->
@@ -641,9 +631,11 @@ const formatTime = (timestamp) => {
                       • 网络是否能访问 LLM 服务
                     </span>
                   </div>
-                  <div class="connection-item check-method">
-                    <button class="check-btn llm-btn" @click="checkLLMConnection">🤖 检查 LLM 连接</button>
-                  </div>
+                </div>
+
+                <!-- 统一检查按钮 -->
+                <div class="connection-item check-method" style="margin-top: 1rem; justify-content: center;">
+                  <button class="check-btn system-check" @click="checkSystemConnection">🔗 检查系统连接</button>
                 </div>
               </div>
               
@@ -1911,6 +1903,17 @@ const formatTime = (timestamp) => {
 
 .check-btn.llm-btn:hover {
   background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+}
+
+.check-btn.system-check {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  font-size: 1rem;
+  padding: 0.8rem 2rem;
+}
+
+.check-btn.system-check:hover {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
 }
 
 /* AI 分析触发按钮样式 */

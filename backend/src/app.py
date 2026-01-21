@@ -2,6 +2,7 @@ import os
 import tempfile
 import json
 from typing import Any, Dict, List, Optional, Union
+from datetime import datetime
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -364,7 +365,6 @@ async def chat(
         # 调用助教服务
         response_text = service.chat(request.page_id, request.message)
         
-        from datetime import datetime
         return {
             "status": "ok",
             "response": response_text,
@@ -565,8 +565,87 @@ async def search_by_concepts(
 
 @app.get("/api/v1/health")
 async def health_check():
-    """健康检查"""
-    return {"status": "ok", "version": "0.2.0"}
+    """健康检查 - 轻量级，不调用任何服务依赖"""
+    try:
+        # 只返回静态信息，不涉及任何服务初始化
+        return {
+            "status": "ok",
+            "version": "0.2.0",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        # 即使出错也快速返回
+        return {
+            "status": "error",
+            "message": str(e),
+            "version": "0.2.0"
+        }
+
+
+@app.get("/api/v1/health/complete")
+async def complete_health_check():
+    """联合健康检查 - 同时检查后端和 LLM 连接（快速诊断）"""
+    import asyncio
+    import aiohttp
+    
+    config = load_config()
+    llm_config = LLMConfig(
+        api_key=config["llm"]["api_key"],
+        base_url=config["llm"]["base_url"],
+        model=config["llm"]["model"]
+    )
+    
+    # 后端检查（极快速）
+    backend_status = {
+        "status": "ok",
+        "version": "0.2.0",
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    # LLM 检查（快速预检查，不调用 LLM API）
+    llm_status = {
+        "status": "unknown",
+        "message": "检查中...",
+        "model": llm_config.model,
+        "configured": bool(llm_config.api_key)
+    }
+    
+    try:
+        # 检查 API Key
+        if not llm_config.api_key:
+            llm_status["status"] = "error"
+            llm_status["message"] = "API Key 未配置"
+            llm_status["response_preview"] = "API Key 配置缺失"
+        else:
+            # 异步快速网络检查
+            try:
+                timeout = aiohttp.ClientTimeout(total=2, connect=1)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    base_url = llm_config.base_url or "https://api.openai.com/v1"
+                    async with session.head(base_url, ssl=False, allow_redirects=True) as resp:
+                        if resp.status in [200, 401, 403, 404]:
+                            llm_status["status"] = "ok"
+                            llm_status["message"] = "LLM 服务网络连接正常"
+                            llm_status["response_preview"] = f"LLM 模型: {llm_config.model} ✓"
+                        else:
+                            llm_status["status"] = "warning"
+                            llm_status["message"] = f"服务返回异常状态码 {resp.status}"
+                            llm_status["response_preview"] = f"HTTP {resp.status}"
+            except (aiohttp.ClientConnectorError, asyncio.TimeoutError):
+                llm_status["status"] = "error"
+                llm_status["message"] = "无法连接到 LLM 服务"
+                llm_status["response_preview"] = "连接超时"
+    except Exception as e:
+        llm_status["status"] = "error"
+        llm_status["message"] = f"检查失败: {str(e)}"
+        llm_status["response_preview"] = type(e).__name__
+    
+    return {
+        "status": "ok",
+        "backend": backend_status,
+        "llm": llm_status,
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @app.post("/api/v1/search-semantic")
@@ -689,7 +768,11 @@ async def delete_file_slides(
 
 @app.get("/api/v1/health/llm")
 async def check_llm_connection():
-    """检查 LLM 连接状态 - 快速诊断"""
+    """检查 LLM 连接状态 - 轻量级快速诊断（不阻塞主线程）"""
+    import asyncio
+    import aiohttp
+    from urllib.parse import urljoin
+    
     config = load_config()
     llm_config = LLMConfig(
         api_key=config["llm"]["api_key"],
@@ -697,64 +780,85 @@ async def check_llm_connection():
         model=config["llm"]["model"]
     )
     
-    # 检查 API Key 配置
+    # 第一步：检查 API Key 配置
     if not llm_config.api_key:
         return {
             "status": "error",
             "message": "API Key 未配置",
             "detail": "请检查 config.json 中的 llm.api_key 字段",
             "configured": False,
-            "model": llm_config.model
+            "model": llm_config.model,
+            "response_preview": "API Key 配置缺失"
         }
     
+    # 第二步：快速网络连接检查（不实际调用 LLM）
     try:
-        # 创建 LLM 实例进行连接测试
-        llm = llm_config.create_llm(temperature=0.5)
+        # 使用超短超时时间（2秒）做快速连接预检
+        timeout = aiohttp.ClientTimeout(total=2, connect=1)
         
-        # 发送一个极其简洁的测试消息（超快速）
-        test_message = "Say OK"
-        response = llm.invoke(test_message)
-        
-        # 检查是否得到有效响应
-        if response and response.content:
-            return {
-                "status": "ok",
-                "message": "LLM 连接正常",
-                "model": llm_config.model,
-                "configured": True,
-                "response_preview": response.content[:50]
-            }
-        else:
-            return {
-                "status": "error",
-                "message": "LLM 返回空结果",
-                "detail": "服务返回内容为空，可能是配置问题",
-                "model": llm_config.model,
-                "configured": True
-            }
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # 只测试网络连通性，不调用实际 API
+            base_url = llm_config.base_url or "https://api.openai.com/v1"
+            
+            # 尝试连接到 base_url
+            try:
+                async with session.head(base_url, ssl=False, allow_redirects=True) as resp:
+                    # 如果能连接（即使是 401/403 也表示网络通），说明基础连接正常
+                    if resp.status in [200, 401, 403, 404]:
+                        # 网络连接正常，可能的状态（具体的 API 验证会在实际调用时进行）
+                        return {
+                            "status": "ok",
+                            "message": "LLM 服务网络连接正常（预检查）",
+                            "model": llm_config.model,
+                            "configured": True,
+                            "base_url": base_url,
+                            "response_preview": f"LLM 模型: {llm_config.model} ✓ 网络连接正常",
+                            "note": "快速预检查只验证网络，实际 API 调用会在使用时进行"
+                        }
+                    else:
+                        return {
+                            "status": "warning",
+                            "message": f"LLM 服务返回异常状态码 {resp.status}",
+                            "model": llm_config.model,
+                            "configured": True,
+                            "base_url": base_url,
+                            "response_preview": f"服务状态异常 (HTTP {resp.status})"
+                        }
+            except (aiohttp.ClientConnectorError, asyncio.TimeoutError):
+                # 网络连接失败
+                return {
+                    "status": "error",
+                    "message": "无法连接到 LLM 服务",
+                    "detail": f"连接超时或服务不可达：{base_url}",
+                    "model": llm_config.model,
+                    "configured": True,
+                    "base_url": base_url,
+                    "response_preview": f"连接失败: {base_url}"
+                }
     except Exception as e:
         error_msg = str(e).lower()
         
-        # 根据错误类型提供更具体的诊断
-        if "401" in error_msg or "unauthorized" in error_msg or "invalid" in error_msg:
-            detail = "API Key 无效或已过期 - 请检查 config.json"
-        elif "429" in error_msg or "rate_limit" in error_msg or "rate limit" in error_msg:
-            detail = "超过 API 调用速率限制，请稍后再试"
-        elif "quota" in error_msg or "exceeded" in error_msg:
-            detail = "API 配额已用尽 - 请检查账户余额"
-        elif "timeout" in error_msg or "timed out" in error_msg:
-            detail = "请求超时 - 检查网络连接或 LLM 服务状态"
+        # 根据错误类型提供诊断
+        if "401" in error_msg or "unauthorized" in error_msg:
+            detail = "API Key 可能无效 - 请检查 config.json"
+            preview = "认证失败: API Key 无效"
+        elif "ssl" in error_msg or "certificate" in error_msg:
+            detail = "SSL 证书问题 - 请检查网络或代理设置"
+            preview = "SSL 证书错误"
         elif "connection" in error_msg or "refused" in error_msg:
             detail = "无法连接到 LLM 服务 - 检查 base_url 配置"
+            preview = "无法连接到服务"
         else:
-            detail = str(e)
+            detail = f"快速诊断失败：{str(e)}"
+            preview = f"诊断错误: {type(e).__name__}"
         
         return {
             "status": "error",
-            "message": "LLM 连接失败",
+            "message": "LLM 连接检查失败",
             "detail": detail,
             "model": llm_config.model,
             "configured": True,
+            "response_preview": preview,
             "error_type": type(e).__name__
         }
 
