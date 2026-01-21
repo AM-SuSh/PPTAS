@@ -270,40 +270,37 @@ class MindmapService:
                         meta={"kind": "key_concept", "parent": "chapter"}
                     )
                     chapter_node.children.append(concept_node)
-        
-        # 添加知识点单元节点（直接作为根节点的子节点，不分组）
+
         knowledge_units = global_analysis.get("knowledge_units", [])
-        for unit in knowledge_units:
-            unit_title = unit.get("title", "未命名知识点")
-            core_concepts = unit.get("core_concepts", [])
-            pages = unit.get("pages", [])
-            unit_id = unit.get("unit_id", f"unit_{node_counter}")
-            
+        if knowledge_units:
             node_counter += 1
-            unit_node = _Node(
-                id=f"unit{node_counter}",
-                label=unit_title,
-                meta={
-                    "kind": "knowledge_unit",
-                    "unit_id": unit_id,
-                    "pages": pages,
-                    "page_count": len(pages)
-                }
+            units_node = _Node(
+                id=f"units{node_counter}",
+                label="知识点单元",
+                meta={"kind": "knowledge_units_section"}
             )
-            root.children.append(unit_node)
-            
-            # 添加知识点的核心概念（直接作为知识点单元的子节点）
-            for concept in core_concepts[:max_children_per_node]:
-                if not concept or not str(concept).strip():
-                    continue
+            root.children.append(units_node)
+
+            for unit in knowledge_units:
+                unit_title = unit.get("title", "未命名知识点")
+                core_concepts = unit.get("core_concepts", [])
+                pages = unit.get("pages", [])
+                unit_id = unit.get("unit_id", f"unit_{node_counter}")
+
                 node_counter += 1
-                concept_node = _Node(
-                    id=f"kc{node_counter}",
-                    label=str(concept).strip(),
-                    meta={"kind": "core_concept", "parent": "knowledge_unit"}
+                unit_node = _Node(
+                    id=f"unit{node_counter}",
+                    label=unit_title,
+                    meta={
+                        "kind": "knowledge_unit",
+                        "unit_id": unit_id,
+                        "pages": pages,
+                        "page_count": len(pages)
+                    }
                 )
-                unit_node.children.append(concept_node)
-        
+                units_node.children.append(unit_node)
+
+
         return {"root": root.to_dict()}
 
 
