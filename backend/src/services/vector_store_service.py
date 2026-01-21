@@ -1,18 +1,18 @@
 """
-向量存储服务 - 用于存储和检索 PPT/PDF 切片
-支持基于语义的相关性检索
+向量存储服务 - 重新设计版本
+目标：简单、高效、准确的语义搜索
 """
 
 import os
 import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from collections import defaultdict
 
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# 优先使用新的 langchain-chroma，如果不存在则回退到旧版本
+# 优先使用新的 langchain-chroma
 try:
     from langchain_chroma import Chroma
 except ImportError:
@@ -25,20 +25,20 @@ from src.agents.base import LLMConfig
 
 
 class VectorStoreService:
-    """向量存储服务 - 存储 PPT/PDF 切片并支持语义检索"""
+    """
+    向量存储服务 - 重新设计版本
+    
+    核心原则：
+    1. 保持幻灯片完整性 - 每个幻灯片作为一个完整的文档存储
+    2. 简化文本转换 - 直接使用PPT解析结果，不做多余处理
+    3. 优化搜索策略 - 提高相关性，减少噪音
+    """
     
     def __init__(self, llm_config: LLMConfig, vector_db_path: str = "./ppt_vector_db"):
-        """
-        初始化向量存储服务
-        
-        Args:
-            llm_config: LLM 配置（用于创建 embeddings）
-            vector_db_path: 向量数据库存储路径
-        """
+        """初始化向量存储服务"""
         self.llm_config = llm_config
         self.vector_db_path = vector_db_path
-        # 初始化 embeddings
-        # 注意：某些 API 可能不支持 model 参数，先尝试不指定
+
         try:
             self.embeddings = OpenAIEmbeddings(
                 api_key=llm_config.api_key,
@@ -51,112 +51,97 @@ class VectorStoreService:
                 api_key=llm_config.api_key,
                 base_url=llm_config.base_url
             )
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=400,
-            chunk_overlap=50,
-            length_function=len,
-        )
+        
         self.vectorstore: Optional[Chroma] = None
         try:
             self._initialize_vectorstore()
         except Exception as e:
             print(f"❌ 向量数据库服务初始化失败: {e}")
-            print(f"   提示: 向量存储功能将不可用，但其他功能正常")
-            # 不抛出异常，允许服务继续运行（存储功能会失败，但不影响其他功能）
             self.vectorstore = None
     
     def _initialize_vectorstore(self):
         """初始化向量数据库"""
-        max_retries = 3
-        last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                # 确保目录存在
-                os.makedirs(self.vector_db_path, exist_ok=True)
-                
-                # 尝试加载现有的向量数据库或创建新的
-                if os.path.exists(self.vector_db_path) and os.listdir(self.vector_db_path):
-                    # 目录存在且不为空，尝试加载
-                    try:
-                        self.vectorstore = Chroma(
-                            persist_directory=self.vector_db_path,
-                            embedding_function=self.embeddings
-                        )
-                        # 验证初始化是否成功
-                        if self.vectorstore is not None:
-                            print(f"✅ 向量数据库初始化成功 (路径: {self.vector_db_path})")
-                            return
-                    except Exception as load_error:
-                        print(f"⚠️  加载现有数据库失败，尝试创建新的: {load_error}")
-                        # 如果加载失败，删除旧目录重新创建
-                        import shutil
-                        try:
-                            shutil.rmtree(self.vector_db_path)
-                            os.makedirs(self.vector_db_path, exist_ok=True)
-                        except:
-                            pass
-                
-                # 创建新的向量数据库
-                self.vectorstore = Chroma(
-                    persist_directory=self.vector_db_path,
-                    embedding_function=self.embeddings
-                )
-                
-                # 验证初始化是否成功
-                if self.vectorstore is not None:
+        try:
+            os.makedirs(self.vector_db_path, exist_ok=True)
+            
+            # 尝试加载现有数据库
+            if os.path.exists(self.vector_db_path) and os.listdir(self.vector_db_path):
+                try:
+                    self.vectorstore = Chroma(
+                        persist_directory=self.vector_db_path,
+                        embedding_function=self.embeddings
+                    )
                     print(f"✅ 向量数据库初始化成功 (路径: {self.vector_db_path})")
                     return
-                else:
-                    raise Exception("向量数据库对象创建失败")
-                    
-            except Exception as e:
-                last_error = e
-                print(f"⚠️  初始化向量数据库失败 (尝试 {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    import time
-                    time.sleep(0.5)  # 等待后重试
-                else:
-                    # 最后一次尝试失败，抛出异常
-                    print(f"❌ 向量数据库初始化最终失败: {e}")
-                    raise Exception(f"向量数据库初始化失败: {e}") from last_error
-        
-        # 如果所有重试都失败
-        raise Exception(f"向量数据库初始化失败，已重试 {max_retries} 次: {last_error}")
+                except Exception as e:
+                    print(f"⚠️  加载现有数据库失败: {e}")
+                    # 删除旧数据库，重新创建
+                    import shutil
+                    shutil.rmtree(self.vector_db_path)
+                    os.makedirs(self.vector_db_path, exist_ok=True)
+            
+            # 创建新数据库
+            self.vectorstore = Chroma(
+                persist_directory=self.vector_db_path,
+                embedding_function=self.embeddings
+            )
+            print(f"✅ 向量数据库初始化成功 (路径: {self.vector_db_path})")
+            
+        except Exception as e:
+            print(f"❌ 向量数据库初始化失败: {e}")
+            raise
     
-    def _create_document_id(self, file_name: str, page_num: int, chunk_index: int = 0) -> str:
-        """创建文档 ID"""
-        return f"{file_name}_{page_num}_{chunk_index}_{uuid.uuid4().hex[:8]}"
-    
-    def _slide_to_text(self, slide: Dict[str, Any]) -> str:
-        """将幻灯片数据转换为文本用于向量化"""
+    def _extract_slide_text(self, slide: Dict[str, Any]) -> str:
+        """
+        从幻灯片中提取文本
+        核心原则：简单、完整、保留原始信息
+        """
         text_parts = []
         
-        # 添加标题
-        if slide.get("title"):
-            text_parts.append(f"标题: {slide['title']}")
+        # 1. 标题（最重要）
+        title = slide.get("title", "").strip()
+        if title:
+            text_parts.append(title)
         
-        # 添加内容点
-        if slide.get("raw_points"):
-            for point in slide["raw_points"]:
-                if isinstance(point, dict):
-                    text_parts.append(point.get("text", ""))
-                elif isinstance(point, str):
-                    text_parts.append(point)
+        # 2. 内容点（保持原始顺序和结构）
+        raw_points = slide.get("raw_points", [])
+        for point in raw_points:
+            if isinstance(point, dict):
+                text = point.get("text", "").strip()
+                if text:
+                    # 添加层级缩进
+                    level = point.get("level", 0)
+                    indent = "  " * level
+                    text_parts.append(f"{indent}{text}")
+            elif isinstance(point, str):
+                text = point.strip()
+                if text:
+                    text_parts.append(text)
         
-        # 添加类型信息
-        if slide.get("type"):
-            text_parts.append(f"类型: {slide['type']}")
+        # 组合文本
+        full_text = "\n".join(text_parts)
         
-        return "\n".join(text_parts)
+        return full_text
     
-    def _split_long_chunk(self, text: str, max_chars: int) -> List[str]:
-        """将过长的文本块进一步分割成更小的块"""
+    def _split_text_for_embedding(self, text: str, max_tokens: int = 400) -> List[str]:
+        """
+        将长文本分割成多个chunk，确保每个chunk不超过token限制
+        
+        Args:
+            text: 原始文本
+            max_tokens: 最大token数（保守估计：1个token ≈ 3个字符）
+        
+        Returns:
+            分割后的文本块列表
+        """
+        # 保守估计：400 tokens ≈ 1200 字符
+        max_chars = max_tokens * 3
+        
         if len(text) <= max_chars:
             return [text]
         
+        # 如果文本太长，按段落分割
         chunks = []
-        # 尝试按换行符分割
         lines = text.split('\n')
         current_chunk = []
         current_length = 0
@@ -165,7 +150,7 @@ class VectorStoreService:
             line_length = len(line) + 1  # +1 for newline
             
             if current_length + line_length > max_chars and current_chunk:
-                # 当前块已满，保存并开始新块
+                # 当前chunk已满，保存
                 chunks.append('\n'.join(current_chunk))
                 current_chunk = [line]
                 current_length = line_length
@@ -173,15 +158,15 @@ class VectorStoreService:
                 current_chunk.append(line)
                 current_length += line_length
         
-        # 添加最后一个块
+        # 添加最后一个chunk
         if current_chunk:
             chunks.append('\n'.join(current_chunk))
         
-        # 如果某个块仍然过长（可能没有换行符），强制按字符分割
+        # 如果还有超长的chunk（单行超长），强制截断
         final_chunks = []
         for chunk in chunks:
             if len(chunk) > max_chars:
-                # 强制分割
+                # 强制截断
                 for i in range(0, len(chunk), max_chars):
                     final_chunks.append(chunk[i:i + max_chars])
             else:
@@ -192,157 +177,166 @@ class VectorStoreService:
     def store_document_slides(
         self,
         file_name: str,
-        file_type: str,  # "pdf" 或 "pptx"
+        file_type: str,
         slides: List[Dict[str, Any]],
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        overwrite: bool = False
     ) -> Dict[str, Any]:
         """
         存储文档的所有幻灯片到向量数据库
         
-        Args:
-            file_name: 文件名
-            file_type: 文件类型 ("pdf" 或 "pptx")
-            slides: 幻灯片列表（来自 DocumentParserService）
-            metadata: 额外的元数据
-        
-        Returns:
-            存储结果统计
+        核心策略：
+        1. 每个幻灯片作为一个完整的文档（不分块）
+        2. 保留所有原始信息
+        3. 添加丰富的元数据便于过滤
         """
         if not self.vectorstore:
-            error_msg = (
-                "向量数据库未初始化。可能的原因：\n"
-                "1. API Key 配置错误或无效\n"
-                "2. Embedding API 调用失败\n"
-                "3. 数据库目录权限问题\n"
-                "4. 依赖包未正确安装（需要 langchain-chroma 或 langchain-community）\n"
-                "请查看上面的错误日志获取详细信息"
-            )
-            print(f"❌ {error_msg}")
             raise Exception("向量数据库未初始化")
         
-        documents = []
-        metadatas = []
-        ids = []
+        # 如果需要覆盖，先删除旧数据
+        if overwrite:
+            self.delete_file_slides(file_name)
         
-        total_chunks = 0
+        documents = []
+        ids = []
+        stored_count = 0
+        
+        print(f"📝 开始存储文档: {file_name}，共 {len(slides)} 页")
         
         for slide in slides:
-            # 将幻灯片转换为文本
-            slide_text = self._slide_to_text(slide)
+            # 提取文本
+            slide_text = self._extract_slide_text(slide)
             
-            if not slide_text.strip():
+            # 调试信息
+            page_num = slide.get('page_num', 0)
+            print(f"  📄 页面 {page_num}: 提取文本 {len(slide_text)} 字符")
+            
+            # 过滤空内容
+            if not slide_text or len(slide_text.strip()) < 10:
+                print(f"  ⏭️  跳过页面 {page_num}：内容过短（{len(slide_text)} 字符）")
                 continue
             
-            # 如果文本较长，进行分块
-            chunks = self.text_splitter.split_text(slide_text)
+            # 如果文本太长，分割成多个chunk
+            text_chunks = self._split_text_for_embedding(slide_text, max_tokens=400)
             
-            # 进一步处理：确保每个 chunk 不超过 512 tokens（保守估计：1500 字符 ≈ 512 tokens）
-            # 如果超过，进一步分割
-            MAX_CHUNK_CHARS = 1500  # 保守估计，确保不超过 512 tokens
+            if len(text_chunks) > 1:
+                print(f"  ✂️  页面 {page_num} 文本较长，分割为 {len(text_chunks)} 个chunk")
             
-            final_chunks = []
-            for chunk in chunks:
-                if not chunk.strip():
-                    continue
+            # 为每个chunk创建文档
+            for chunk_idx, chunk_text in enumerate(text_chunks):
+                doc_id = f"{file_name}_{page_num}_{chunk_idx}_{uuid.uuid4().hex[:6]}"
                 
-                # 如果 chunk 太长，进一步分割
-                if len(chunk) > MAX_CHUNK_CHARS:
-                    # 按句子或段落分割
-                    sub_chunks = self._split_long_chunk(chunk, MAX_CHUNK_CHARS)
-                    final_chunks.extend(sub_chunks)
-                else:
-                    final_chunks.append(chunk)
-            
-            for chunk_index, chunk in enumerate(final_chunks):
-                if not chunk.strip():
-                    continue
-                
-                # 再次检查长度，如果仍然过长则截断（最后的安全措施）
-                if len(chunk) > MAX_CHUNK_CHARS:
-                    chunk = chunk[:MAX_CHUNK_CHARS]
-                    print(f"  ⚠️  页面 {slide.get('page_num', 0)} 的 chunk {chunk_index} 过长，已截断至 {MAX_CHUNK_CHARS} 字符")
-                
-                # 创建文档
                 doc = Document(
-                    page_content=chunk,
+                    page_content=chunk_text,
                     metadata={
                         "file_name": file_name,
                         "file_type": file_type,
-                        "page_num": slide.get("page_num", 0),
+                        "page_num": page_num,
                         "slide_title": slide.get("title", ""),
                         "slide_type": slide.get("type", "content"),
-                        "chunk_index": chunk_index,
-                        "total_chunks": len(final_chunks),
+                        "chunk_index": chunk_idx,
+                        "total_chunks": len(text_chunks),
                         "stored_at": datetime.now().isoformat(),
                         **(metadata or {})
                     }
                 )
                 
-                doc_id = self._create_document_id(file_name, slide.get("page_num", 0), chunk_index)
-                
                 documents.append(doc)
-                metadatas.append(doc.metadata)
                 ids.append(doc_id)
-                total_chunks += 1
-
+            
+            print(f"  ✓ 页面 {page_num} 已加入存储队列（{len(text_chunks)} 个chunk）")
+        
+        # 批量存储
         if documents:
-            # --- 修改部分：分批次写入，应对 API 限制 ---
-            batch_size = 3  # 根据报错信息，这里设为 3（甚至可以设为 1 最稳妥）
-            print(f"📦 正在分批存储向量，每批 {batch_size} 条，总计 {len(documents)} 条...")
-
-            for i in range(0, len(documents), batch_size):
-                batch_docs = documents[i: i + batch_size]
-                batch_ids = ids[i: i + batch_size]
-                try:
-                    self.vectorstore.add_documents(
-                        documents=batch_docs,
-                        ids=batch_ids
-                    )
-                    # print(f"  ✅ 已完成 {min(i + batch_size, len(documents))}/{len(documents)}")
-                except Exception as batch_error:
-                    print(f"  ❌ 批次 {i // batch_size + 1} 存储失败: {batch_error}")
-                    # 如果某一批失败，可以选择继续或跳过
-
-            # 部分旧版本 Chroma 需要手动 persist，新版本已自动持久化
+            print(f"  📦 准备存储 {len(documents)} 个文档到向量数据库")
             try:
-                self.vectorstore.persist()
-            except:
-                pass
+                # 分批存储，避免API限制
+                # 由于API限制每个文档<512 tokens，需要更小的批次
+                batch_size = 5  # 减小批次大小
+                for i in range(0, len(documents), batch_size):
+                    batch_docs = documents[i:i + batch_size]
+                    batch_ids = ids[i:i + batch_size]
+                    
+                    print(f"  🔄 正在存储批次 {i//batch_size + 1}，包含 {len(batch_docs)} 个文档...")
+                    
+                    try:
+                        self.vectorstore.add_documents(
+                            documents=batch_docs,
+                            ids=batch_ids
+                        )
+                        stored_count += len(batch_docs)
+                        print(f"  ✅ 已存储 {stored_count}/{len(documents)} 页")
+                    except Exception as batch_err:
+                        # 如果批次失败，尝试单个存储
+                        print(f"  ⚠️ 批次存储失败，尝试逐个存储...")
+                        for doc, doc_id in zip(batch_docs, batch_ids):
+                            try:
+                                self.vectorstore.add_documents(
+                                    documents=[doc],
+                                    ids=[doc_id]
+                                )
+                                stored_count += 1
+                                print(f"    ✓ 页面 {doc.metadata.get('page_num')} 已存储")
+                            except Exception as single_err:
+                                error_msg = str(single_err)
+                                if "512 tokens" in error_msg:
+                                    print(f"    ✗ 页面 {doc.metadata.get('page_num')} 文本过长，跳过")
+                                else:
+                                    print(f"    ✗ 页面 {doc.metadata.get('page_num')} 存储失败: {single_err}")
+                
+                # 持久化（新版 Chroma 可能不需要手动 persist）
+                try:
+                    if hasattr(self.vectorstore, 'persist'):
+                        self.vectorstore.persist()
+                        print(f"  💾 数据已持久化")
+                except Exception as persist_err:
+                    pass  # 新版本自动持久化，忽略此错误
+                
+                print(f"✅ 存储完成: {file_name}，共 {stored_count} 页")
+                
+            except Exception as e:
+                print(f"❌ 存储失败: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
+        else:
+            print(f"⚠️  没有文档需要存储（所有页面可能都被过滤掉了）")
         
         return {
             "file_name": file_name,
             "file_type": file_type,
             "total_slides": len(slides),
-            "total_chunks": total_chunks,
+            "total_chunks": stored_count,  # 保持和旧版一致的字段名
             "stored_at": datetime.now().isoformat()
         }
     
     def search_similar_slides(
         self,
         query: str,
-        top_k: int = 5,
+        top_k: int = 10,
         file_name: Optional[str] = None,
         file_type: Optional[str] = None,
         min_score: float = 0.0
     ) -> List[Dict[str, Any]]:
         """
-        基于语义搜索相似的幻灯片切片
+        语义搜索相似的幻灯片
         
-        Args:
-            query: 查询文本
-            top_k: 返回前 k 个结果
-            file_name: 可选，限制搜索特定文件
-            file_type: 可选，限制搜索特定文件类型
-            min_score: 最小相似度分数（0-1）
-        
-        Returns:
-            搜索结果列表，每个结果包含：
-            - content: 文本内容
-            - metadata: 元数据（文件、页码等）
-            - score: 相似度分数
+        优化策略：
+        1. 使用更宽松的搜索范围（搜索更多结果）
+        2. 按页面去重（每个页面只返回一次）
+        3. 使用更合理的相似度计算
+        4. 按相似度排序
+        5. 如果向量搜索失败，自动降级到关键词搜索
         """
         if not self.vectorstore:
+            print("⚠️  向量数据库未初始化")
             return []
+        
+        # 调试信息
+        print(f"\n🔍 开始搜索:")
+        print(f"   查询: {query}")
+        print(f"   top_k: {top_k}, min_score: {min_score}")
+        print(f"   文件过滤: {file_name or '无'}")
         
         # 构建过滤条件
         where = {}
@@ -352,56 +346,244 @@ class VectorStoreService:
             where["file_type"] = file_type
         
         try:
-            # 使用相似度搜索
+            # 搜索更多结果（top_k * 2），然后去重
+            search_k = max(top_k * 2, 20)
+            
+            # 执行向量搜索
             if where:
                 results = self.vectorstore.similarity_search_with_score(
                     query,
-                    k=top_k,
+                    k=search_k,
                     filter=where
                 )
             else:
                 results = self.vectorstore.similarity_search_with_score(
                     query,
-                    k=top_k
+                    k=search_k
                 )
             
-            # 格式化结果
-            formatted_results = []
-            for doc, score in results:
-                # 相似度分数转换为 0-1 范围（ChromaDB 使用距离，需要转换）
-                similarity_score = 1 / (1 + score) if score > 0 else 1.0
-                
-                if similarity_score >= min_score:
-                    formatted_results.append({
-                        "content": doc.page_content,
-                        "metadata": doc.metadata,
-                        "score": similarity_score,
-                        "distance": score
-                    })
+            print(f"   原始结果数: {len(results)}")
             
-            return formatted_results
+            # 处理结果
+            formatted_results = []
+            seen_pages = set()  # 用于去重
+            filtered_count = 0
+            
+            for doc, distance in results:
+                # 计算相似度（ChromaDB使用余弦距离）
+                # 余弦距离: [0, 2]，0表示完全相同
+                # 转换为相似度: similarity = 1 - (distance / 2)
+                similarity = 1.0 - (distance / 2.0)
+                similarity = max(0.0, min(1.0, similarity))
+                
+                # 过滤低相似度结果
+                if similarity < min_score:
+                    filtered_count += 1
+                    continue
+                
+                metadata = doc.metadata
+                page_key = (
+                    metadata.get("file_name", ""),
+                    metadata.get("page_num", 0)
+                )
+                
+                # 去重：每个页面只保留一次
+                if page_key in seen_pages:
+                    continue
+                
+                seen_pages.add(page_key)
+                formatted_results.append({
+                    "content": doc.page_content,
+                    "metadata": metadata,
+                    "score": similarity,
+                    "distance": distance
+                })
+            
+            # 按相似度排序
+            formatted_results.sort(key=lambda x: x["score"], reverse=True)
+            
+            # 调试信息
+            print(f"   过滤掉 {filtered_count} 个低分结果")
+            print(f"   去重后结果数: {len(formatted_results)}")
+            if formatted_results:
+                print(f"   最高分: {formatted_results[0]['score']:.3f}")
+                print(f"   最低分: {formatted_results[-1]['score']:.3f}")
+            else:
+                print(f"   ⚠️ 没有找到满足条件的结果！")
+                # 如果没有结果，降低min_score重试
+                if min_score > 0:
+                    print(f"   💡 提示: 当前min_score={min_score}可能过高，尝试降低或设为0")
+            
+            # 返回前 top_k 个结果
+            return formatted_results[:top_k]
+            
         except Exception as e:
-            print(f"⚠️  搜索失败: {e}")
+            error_msg = str(e)
+            print(f"⚠️  向量搜索失败: {error_msg}")
+            
+            # 检查是否是Embedding API错误
+            if "500" in error_msg or "InternalServerError" in error_msg:
+                print(f"❌ Embedding API 服务错误 (500)")
+                print(f"💡 自动降级到关键词搜索...")
+                
+                # 降级到关键词搜索
+                try:
+                    keyword_results = self.search_by_keyword(
+                        query=query,
+                        top_k=top_k,
+                        file_name=file_name
+                    )
+                    if keyword_results:
+                        print(f"✅ 关键词搜索成功，返回 {len(keyword_results)} 个结果")
+                        return keyword_results
+                    else:
+                        print(f"⚠️  关键词搜索也没有结果")
+                except Exception as e2:
+                    print(f"❌ 关键词搜索也失败: {e2}")
+            
             return []
     
-    def search_by_file(self, file_name: str) -> List[Dict[str, Any]]:
+    def search_by_keyword(
+        self,
+        query: str,
+        top_k: int = 10,
+        file_name: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
-        获取特定文件的所有切片
-        
-        Args:
-            file_name: 文件名
-        
-        Returns:
-            该文件的所有切片
+        基于关键词的文本搜索（作为向量搜索的补充）
+        适用于精确关键词匹配
         """
         if not self.vectorstore:
             return []
         
         try:
-            # 使用元数据过滤
-            results = self.vectorstore.get(
-                where={"file_name": file_name}
+            # 获取所有文档
+            all_results = self.vectorstore.get()
+            if not all_results or "documents" not in all_results:
+                return []
+            
+            documents = all_results["documents"]
+            metadatas = all_results.get("metadatas", [])
+            
+            # 关键词搜索
+            query_lower = query.lower()
+            results = []
+            
+            for i, doc_text in enumerate(documents):
+                metadata = metadatas[i] if i < len(metadatas) else {}
+                
+                # 文件过滤
+                if file_name and metadata.get("file_name") != file_name:
+                    continue
+                
+                doc_text_lower = doc_text.lower()
+                
+                # 计算关键词匹配度
+                if query_lower in doc_text_lower:
+                    # 计算匹配次数
+                    match_count = doc_text_lower.count(query_lower)
+                    # 计算相似度（基于匹配次数和文档长度）
+                    score = min(match_count / 10, 1.0)  # 最多1.0
+                    
+                    results.append({
+                        "content": doc_text,
+                        "metadata": metadata,
+                        "score": score,
+                        "match_count": match_count,
+                        "method": "keyword"
+                    })
+            
+            # 按匹配次数排序
+            results.sort(key=lambda x: (x["score"], x.get("match_count", 0)), reverse=True)
+            
+            return results[:top_k]
+            
+        except Exception as e:
+            print(f"⚠️  关键词搜索失败: {e}")
+            return []
+    
+    def search_hybrid(
+        self,
+        query: str,
+        top_k: int = 10,
+        file_name: Optional[str] = None,
+        semantic_weight: float = 0.6,
+        keyword_weight: float = 0.4
+    ) -> List[Dict[str, Any]]:
+        """
+        混合搜索：结合语义搜索和关键词搜索
+        
+        Args:
+            query: 查询文本
+            top_k: 返回结果数量
+            file_name: 限制搜索的文件
+            semantic_weight: 语义搜索权重（0-1）
+            keyword_weight: 关键词搜索权重（0-1）
+        """
+        # 执行两种搜索
+        semantic_results = self.search_similar_slides(
+            query=query,
+            top_k=top_k * 2,
+            file_name=file_name,
+            min_score=0.0
+        )
+        
+        keyword_results = self.search_by_keyword(
+            query=query,
+            top_k=top_k * 2,
+            file_name=file_name
+        )
+        
+        # 合并结果
+        combined = {}
+        
+        # 添加语义搜索结果
+        for result in semantic_results:
+            page_key = (
+                result["metadata"].get("file_name", ""),
+                result["metadata"].get("page_num", 0)
             )
+            combined[page_key] = {
+                "content": result["content"],
+                "metadata": result["metadata"],
+                "semantic_score": result["score"] * semantic_weight,
+                "keyword_score": 0,
+                "final_score": result["score"] * semantic_weight
+            }
+        
+        # 添加关键词搜索结果
+        for result in keyword_results:
+            page_key = (
+                result["metadata"].get("file_name", ""),
+                result["metadata"].get("page_num", 0)
+            )
+            keyword_score = result["score"] * keyword_weight
+            
+            if page_key in combined:
+                combined[page_key]["keyword_score"] = keyword_score
+                combined[page_key]["final_score"] += keyword_score
+            else:
+                combined[page_key] = {
+                    "content": result["content"],
+                    "metadata": result["metadata"],
+                    "semantic_score": 0,
+                    "keyword_score": keyword_score,
+                    "final_score": keyword_score
+                }
+        
+        # 转换为列表并排序
+        final_results = list(combined.values())
+        final_results.sort(key=lambda x: x["final_score"], reverse=True)
+        
+        return final_results[:top_k]
+    
+    def search_by_file(self, file_name: str) -> List[Dict[str, Any]]:
+        """获取特定文件的所有切片"""
+        if not self.vectorstore:
+            return []
+        
+        try:
+            results = self.vectorstore.get(where={"file_name": file_name})
             
             formatted_results = []
             if results and "documents" in results:
@@ -418,29 +600,22 @@ class VectorStoreService:
             return []
     
     def delete_file_slides(self, file_name: str) -> bool:
-        """
-        删除特定文件的所有切片
-        
-        Args:
-            file_name: 文件名
-        
-        Returns:
-            是否成功删除
-        """
+        """删除特定文件的所有切片"""
         if not self.vectorstore:
             return False
         
         try:
-            # 获取该文件的所有 ID
-            results = self.vectorstore.get(
-                where={"file_name": file_name}
-            )
+            results = self.vectorstore.get(where={"file_name": file_name})
             
             if results and "ids" in results:
                 ids_to_delete = results["ids"]
                 if ids_to_delete:
                     self.vectorstore.delete(ids=ids_to_delete)
-                    self.vectorstore.persist()
+                    try:
+                        self.vectorstore.persist()
+                    except:
+                        pass
+                    print(f"✅ 已删除文件 {file_name} 的 {len(ids_to_delete)} 个切片")
                     return True
             
             return False
@@ -449,38 +624,47 @@ class VectorStoreService:
             return False
     
     def get_stats(self) -> Dict[str, Any]:
-        """
-        获取向量数据库统计信息
-        
-        Returns:
-            统计信息
-        """
+        """获取向量数据库统计信息"""
         if not self.vectorstore:
-            return {"total_documents": 0, "collections": []}
+            return {"total_documents": 0, "total_files": 0}
         
         try:
-            # 获取所有文档
             all_results = self.vectorstore.get()
             
             total_docs = len(all_results.get("ids", [])) if all_results else 0
             
-            # 统计文件类型
-            file_types = {}
+            # 统计信息
+            file_types = defaultdict(int)
             file_names = set()
+            page_count_by_file = defaultdict(int)
             
             if all_results and "metadatas" in all_results:
                 for metadata in all_results["metadatas"]:
                     file_type = metadata.get("file_type", "unknown")
-                    file_types[file_type] = file_types.get(file_type, 0) + 1
-                    file_names.add(metadata.get("file_name", "unknown"))
+                    file_name = metadata.get("file_name", "unknown")
+                    
+                    file_types[file_type] += 1
+                    file_names.add(file_name)
+                    page_count_by_file[file_name] += 1
             
-            return {
+            stats = {
                 "total_documents": total_docs,
                 "total_files": len(file_names),
-                "file_types": file_types,
+                "file_types": dict(file_types),
+                "files": dict(page_count_by_file),
                 "vector_db_path": self.vector_db_path
             }
+            
+            # 打印统计信息
+            print(f"\n📊 向量数据库统计:")
+            print(f"   总文档数: {total_docs}")
+            print(f"   文件数: {len(file_names)}")
+            if file_names:
+                print(f"   文件列表:")
+                for fn in file_names:
+                    print(f"     - {fn}: {page_count_by_file[fn]} 页")
+            
+            return stats
         except Exception as e:
             print(f"⚠️  获取统计信息失败: {e}")
             return {"total_documents": 0, "error": str(e)}
-

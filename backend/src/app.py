@@ -344,6 +344,28 @@ async def expand_ppt(
         existing_doc = persistence.get_document_by_hash(file_hash)
         if existing_doc:
             print(f"♻️  命中文档缓存: {filename} hash={file_hash[:12]} doc_id={existing_doc['doc_id']}")
+            
+            # 即使命中缓存，也要检查向量数据库中是否存在
+            # 如果不存在，需要存储
+            try:
+                slides = existing_doc.get("slides", [])
+                file_type = ext[1:] if ext.startswith('.') else ext
+                
+                # 检查向量数据库中是否已存储
+                existing_vectors = vector_store.search_by_file(filename)
+                if not existing_vectors or len(existing_vectors) == 0:
+                    print(f"🔄 向量数据库中未找到此文件，开始存储...")
+                    store_result = vector_store.store_document_slides(
+                        file_name=filename,
+                        file_type=file_type,
+                        slides=slides
+                    )
+                    print(f"✅ 已存储 {store_result.get('total_chunks', 0)} 个切片到向量数据库")
+                else:
+                    print(f"✅ 向量数据库中已存在此文件（{len(existing_vectors)} 个切片）")
+            except Exception as e:
+                print(f"⚠️  向量数据库检查/存储失败: {e}")
+            
             return {
                 "doc_id": existing_doc["doc_id"],
                 "file_hash": file_hash,
@@ -353,6 +375,8 @@ async def expand_ppt(
 
         slides = parser.parse_document(tmp_path, ext)
         
+        # 存储到向量数据库
+        print(f"\n🔄 准备存储到向量数据库: {filename}")
         try:
             file_type = ext[1:] if ext.startswith('.') else ext  # 移除点号
             store_result = vector_store.store_document_slides(
@@ -360,9 +384,11 @@ async def expand_ppt(
                 file_type=file_type,
                 slides=slides
             )
-            print(f"✅ 已存储 {store_result['total_chunks']} 个切片到向量数据库")
+            print(f"✅ 已存储 {store_result.get('total_chunks', 0)} 个切片到向量数据库")
         except Exception as e:
-            print(f"⚠️  存储到向量数据库失败: {e}")
+            print(f"❌ 存储到向量数据库失败: {e}")
+            import traceback
+            traceback.print_exc()
 
         # 每次上传后都保存解析结果（供下次同 PPT 复用）
         doc_id = str(uuid.uuid4())
