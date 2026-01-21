@@ -49,6 +49,14 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+docker 部署：
+```
+# 构建并启动容器
+docker-compose up --build -d
+# 关闭容器
+docker-compose down
+```
+
 为支持 PPTX 文件的预览功能，需要安装 LibreOffice：
 - Windows: 从 https://www.libreoffice.org/ 下载并安装（请不要变更下载位置，保持默认安全路径）
 - Linux: `sudo apt-get install libreoffice` 或 `sudo yum install libreoffice`
