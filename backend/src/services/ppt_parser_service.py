@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 import base64
 import os
+import shutil
 import subprocess
 import tempfile
 import fitz  # PyMuPDF
@@ -15,8 +16,88 @@ class DocumentParserService:
         if ext == ".pdf":
             return self._parse_pdf(path)
         if ext == ".pptx":
-            return self._parse_pptx(path)
+            # 对于 PPTX 文件，先转换为 PDF，然后使用 PDF 解析方法
+            # 这样可以确保前端能够正常显示预览图片
+            pdf_path = self._convert_pptx_to_pdf(path)
+            try:
+                return self._parse_pdf(pdf_path)
+            finally:
+                # 清理临时 PDF 文件
+                if pdf_path and os.path.exists(pdf_path):
+                    try:
+                        os.remove(pdf_path)
+                    except Exception as e:
+                        print(f"⚠️ 清理临时PDF文件失败: {e}")
         return []
+
+    def _convert_pptx_to_pdf(self, pptx_path: str) -> str:
+        """将 PPTX 文件转换为 PDF，返回临时 PDF 文件路径"""
+        # 查找LibreOffice可执行文件
+        libreoffice_paths = [
+            "soffice",  # Linux/Mac
+            "C:\\Program Files\\LibreOffice\\program\\soffice.exe",  # Windows默认路径
+            "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",  # Windows 32位
+        ]
+        
+        soffice = None
+        for path in libreoffice_paths:
+            if os.path.exists(path) or path == "soffice":
+                try:
+                    # 测试命令是否可用
+                    result = subprocess.run(
+                        [path, "--version"],
+                        capture_output=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0:
+                        soffice = path
+                        break
+                except:
+                    continue
+        
+        if not soffice:
+            raise Exception("未找到LibreOffice，无法将PPTX转换为PDF。请安装LibreOffice：https://www.libreoffice.org/")
+        
+        # 创建临时输出目录
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # 使用LibreOffice将PPTX转换为PDF
+            abs_path = os.path.abspath(pptx_path)
+            result = subprocess.run(
+                [soffice, "--headless", "--convert-to", "pdf", "--outdir", temp_dir, abs_path],
+                capture_output=True,
+                timeout=60000  # 增加超时时间，大文件可能需要更长时间
+            )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr.decode() if result.stderr else "未知错误"
+                raise Exception(f"LibreOffice转换失败: {error_msg}")
+            
+            # 找到生成的PDF文件
+            pdf_name = os.path.splitext(os.path.basename(pptx_path))[0] + ".pdf"
+            pdf_path = os.path.join(temp_dir, pdf_name)
+            
+            if not os.path.exists(pdf_path):
+                raise Exception("LibreOffice未生成PDF文件")
+            
+            # 将PDF文件移动到临时文件位置（这样可以在finally中清理）
+            final_pdf_path = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+            final_pdf_path.close()
+            
+            # 复制文件内容
+            shutil.copy2(pdf_path, final_pdf_path.name)
+            
+            # 清理临时目录
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            return final_pdf_path.name
+        except subprocess.TimeoutExpired:
+            raise Exception("PPTX转PDF超时，文件可能过大或LibreOffice无响应")
+        except Exception as e:
+            # 清理临时目录
+            if 'temp_dir' in locals():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
 
     def _render_page_to_image(self, page, zoom: float = 2.0) -> str:
         """将PDF页面渲染为base64编码的PNG图片"""

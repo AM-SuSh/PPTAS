@@ -48,3 +48,10 @@ cd PPTAS/backend
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+为支持 PPTX 文件的预览功能，需要安装 LibreOffice：
+- Windows: 从 https://www.libreoffice.org/ 下载并安装（请不要变更下载位置，保持默认安全路径）
+- Linux: `sudo apt-get install libreoffice` 或 `sudo yum install libreoffice`
+- Mac: `brew install --cask libreoffice`
+
+安装后，系统会自动检测 LibreOffice 并将 PPTX 文件转换为 PDF 以便在前端显示预览。
