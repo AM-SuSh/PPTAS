@@ -10,7 +10,8 @@ const props = defineProps({
   mindmap: Object,
   mindmapLoading: Boolean,
   mindmapError: String,
-  isAnalyzing: Boolean  // 新增：是否正在分析
+  isAnalyzing: Boolean,  // 新增：是否正在分析
+  docId: String
 })
 
 const emit = defineEmits(['select-slide'])
@@ -210,7 +211,8 @@ const analyzePageWithAI = async () => {
         
         // 实时更新 slide 对象
         updateSlideWithAnalysis(analysisData)
-      }
+      },
+      props.docId || null
     )
     
   } catch (error) {

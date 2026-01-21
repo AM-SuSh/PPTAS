@@ -3,6 +3,7 @@ import tempfile
 import json
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
+import uuid
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, WebSocket, Query, Body, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,7 @@ from src.agents.base import LLMConfig
 from pydantic import BaseModel, Field
 
 from src.services.mindmap_service import MindmapService
+from src.services.persistence_service import PersistenceService
 
 app = FastAPI(title="PPTAS Backend", version="0.2.0")
 
@@ -32,6 +34,7 @@ app.add_middleware(
 
 _ai_tutor_service = None
 _page_analysis_service = None
+_persistence_service = None
 
 def get_ai_tutor():
     """获取 AI 助教服务单例"""
@@ -74,6 +77,7 @@ class ChatResponse(BaseModel):
 
 class PageAnalysisRequest(BaseModel):
     """页面分析请求"""
+    doc_id: Optional[str] = None  # 关联文档ID，用于缓存/持久化
     page_id: int
     title: str
     content: str
@@ -128,6 +132,31 @@ def load_config():
             "temperature": 0.7
         }
     }
+
+
+def get_persistence_service() -> PersistenceService:
+    """获取 SQLite 持久化服务单例"""
+    global _persistence_service
+    if _persistence_service is None:
+        backend_root = os.path.join(os.path.dirname(__file__), "..")  # backend/src -> backend/
+        db_path = os.path.abspath(os.path.join(backend_root, "pptas_cache.sqlite3"))
+        _persistence_service = PersistenceService(db_path=db_path)
+        print(f"🗄️  SQLite 持久化启用: {db_path}")
+    return _persistence_service
+
+
+_persistence_service = None
+
+
+def get_persistence_service() -> PersistenceService:
+    """获取 SQLite 持久化服务单例"""
+    global _persistence_service
+    if _persistence_service is None:
+        backend_root = os.path.join(os.path.dirname(__file__), "..")  # backend/src -> backend/
+        db_path = os.path.abspath(os.path.join(backend_root, "pptas_cache.sqlite3"))
+        _persistence_service = PersistenceService(db_path=db_path)
+        print(f"🗄️  SQLite 持久化启用: {db_path}")
+    return _persistence_service
 
 
 def get_parser_service():
@@ -255,6 +284,7 @@ async def expand_ppt(
     url_form: Optional[str] = Form(None, alias="url"),
     parser: DocumentParserService = Depends(get_parser_service),
     vector_store: VectorStoreService = Depends(get_vector_store_service),
+    persistence: PersistenceService = Depends(get_persistence_service),
 ):
     """接收 PPTX/PDF 文件或 URL，返回解析后的逻辑结构，并存储到向量数据库。"""
     incoming_url = (url_form or url_body or url_query or "").strip() if url_form or url_body or url_query else None
@@ -270,6 +300,18 @@ async def expand_ppt(
             tmp_path, filename = await save_upload_to_temp(file)
 
         ext = ensure_supported_ext(filename)
+
+        file_hash = persistence.sha256_file(tmp_path)
+        existing_doc = persistence.get_document_by_hash(file_hash)
+        if existing_doc:
+            print(f"♻️  命中文档缓存: {filename} hash={file_hash[:12]} doc_id={existing_doc['doc_id']}")
+            return {
+                "doc_id": existing_doc["doc_id"],
+                "file_hash": file_hash,
+                "slides": existing_doc.get("slides", []),
+                "cached": True,
+            }
+
         slides = parser.parse_document(tmp_path, ext)
         
         try:
@@ -282,8 +324,21 @@ async def expand_ppt(
             print(f"✅ 已存储 {store_result['total_chunks']} 个切片到向量数据库")
         except Exception as e:
             print(f"⚠️  存储到向量数据库失败: {e}")
+
+        # 每次上传后都保存解析结果（供下次同 PPT 复用）
+        doc_id = str(uuid.uuid4())
+        file_type = ext[1:] if ext.startswith('.') else ext
+        persistence.upsert_document(
+            doc_id=doc_id,
+            file_name=filename,
+            file_type=file_type,
+            file_hash=file_hash,
+            slides=slides,
+        )
         
         return {
+            "doc_id": doc_id,
+            "file_hash": file_hash,
             "slides": slides,
             "vector_store": {
                 "stored": True,
@@ -303,6 +358,7 @@ async def expand_ppt(
 async def analyze_page(
     request: PageAnalysisRequest,
     service: PageDeepAnalysisService = Depends(get_page_analysis_service),
+    persistence: PersistenceService = Depends(get_persistence_service),
 ):
     """对单个页面进行深度分析 - 优化的 Agent 流程
     
@@ -314,14 +370,18 @@ async def analyze_page(
         页面深度分析结果（结构化分析、知识缺口、补充说明等）
     """
     try:
+        if request.doc_id:
+            cached = persistence.get_page_analysis(request.doc_id, request.page_id)
+            if cached:
+                return {"success": True, "cached": True, "data": cached}
+
         result = service.analyze_page(
             page_id=request.page_id,
             title=request.title,
             content=request.content,
             raw_points=request.raw_points
         )
-        
-        return {
+        payload = {
             "success": True,
             "data": {
                 "page_id": result.page_id,
@@ -336,6 +396,10 @@ async def analyze_page(
                 "raw_points": result.raw_points
             }
         }
+
+        if request.doc_id:
+            persistence.upsert_page_analysis(request.doc_id, request.page_id, payload["data"])
+        return payload
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
@@ -346,10 +410,31 @@ async def analyze_page(
         )
 
 
+@app.get("/api/v1/page-analysis")
+async def get_page_analysis_api(
+    doc_id: str = Query(..., description="上传返回的文档ID"),
+    page_id: int = Query(..., description="页面编号，从1开始"),
+    persistence: PersistenceService = Depends(get_persistence_service),
+):
+    """获取单页历史分析（若存在）。"""
+    cached = persistence.get_page_analysis(doc_id, page_id)
+    return {"success": True, "data": cached}
+
+
+@app.get("/api/v1/page-analysis/all")
+async def get_all_page_analysis(
+    doc_id: str = Query(..., description="上传返回的文档ID"),
+    persistence: PersistenceService = Depends(get_persistence_service),
+):
+    """获取文档所有已保存的页分析（字典，key 为 page_id）。"""
+    data = persistence.list_page_analyses(doc_id)
+    return {"success": True, "data": data}
+
 @app.post("/api/v1/analyze-page-stream")
 async def analyze_page_stream(
     request: PageAnalysisRequest,
     service: PageDeepAnalysisService = Depends(get_page_analysis_service),
+    persistence: PersistenceService = Depends(get_persistence_service),
 ):
     """对单个页面进行流式深度分析 - 实时返回各 Agent 的结果
     
@@ -362,6 +447,18 @@ async def analyze_page_stream(
     """
     async def event_generator():
         try:
+            # 缓存命中直接回放
+            if request.doc_id:
+                cached = persistence.get_page_analysis(request.doc_id, request.page_id)
+                if cached:
+                    yield f"data: {json.dumps({'stage': 'clustering', 'data': cached.get('knowledge_clusters', []), 'message': '已加载历史分析：知识聚类', 'cached': True})}\n\n"
+                    yield f"data: {json.dumps({'stage': 'understanding', 'data': cached.get('understanding_notes', ''), 'message': '已加载历史分析：学习笔记', 'cached': True})}\n\n"
+                    yield f"data: {json.dumps({'stage': 'gaps', 'data': cached.get('knowledge_gaps', []), 'message': '已加载历史分析：知识缺口', 'cached': True})}\n\n"
+                    yield f"data: {json.dumps({'stage': 'expansion', 'data': cached.get('expanded_content', []), 'message': '已加载历史分析：补充说明', 'cached': True})}\n\n"
+                    yield f"data: {json.dumps({'stage': 'retrieval', 'data': cached.get('references', []), 'message': '已加载历史分析：参考资料', 'cached': True})}\n\n"
+                    yield f"data: {json.dumps({'stage': 'complete', 'data': cached, 'message': '历史分析加载完成', 'cached': True})}\n\n"
+                    return
+
             # 步骤1: 知识聚类
             print("⏳ 开始知识聚类...")
             yield f"data: {json.dumps({'stage': 'clustering', 'data': [], 'message': '正在分析难点概念...'})}\n\n"
@@ -460,7 +557,22 @@ async def analyze_page_stream(
             )
             
             print("✅ 分析完全完成")
-            complete_data = {'page_structure': state.get('page_structure', {}), 'references': references}
+            complete_data = {
+                "page_id": request.page_id,
+                "title": request.title,
+                "raw_content": request.content,
+                "page_structure": state.get('page_structure', {}),
+                "knowledge_clusters": knowledge_clusters,
+                "understanding_notes": state.get("understanding_notes", ""),
+                "knowledge_gaps": gaps_data,
+                "expanded_content": expanded_data,
+                "references": references,
+                "raw_points": request.raw_points or [],
+            }
+
+            if request.doc_id:
+                persistence.upsert_page_analysis(request.doc_id, request.page_id, complete_data)
+
             yield f"data: {json.dumps({'stage': 'complete', 'data': complete_data, 'message': '分析完成！'})}\n\n"
             
         except Exception as e:
@@ -578,6 +690,59 @@ async def set_tutor_context(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/tutor/set-context-bulk")
+async def set_tutor_context_bulk(
+    doc_id: str = Body(..., embed=True, description="上传返回的文档ID"),
+    persistence: PersistenceService = Depends(get_persistence_service),
+):
+    """为文档的所有页面批量设置上下文（优先使用已保存的分析结果）。"""
+    try:
+        service = get_ai_tutor()
+        doc = persistence.get_document_by_id(doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="未找到文档")
+
+        analyses = persistence.list_page_analyses(doc_id)
+        slides = doc.get("slides", [])
+        set_pages = []
+
+        for idx, slide in enumerate(slides):
+            page_id = slide.get("page_num") or (idx + 1)
+            analysis = analyses.get(page_id, {})
+
+            raw_points = slide.get("raw_points") or []
+            content_text = analysis.get("raw_content") or slide.get("raw_content") or ""
+            if not content_text and raw_points:
+                content_text = "\n".join(
+                    [p.get("text", "") if isinstance(p, dict) else str(p) for p in raw_points]
+                )
+
+            service.set_page_context(
+                page_id=page_id,
+                title=analysis.get("title") or slide.get("title") or f"Page {page_id}",
+                content=content_text,
+                knowledge_clusters=analysis.get("knowledge_clusters", []),
+                understanding_notes=analysis.get("understanding_notes", ""),
+                knowledge_gaps=analysis.get("knowledge_gaps", []),
+                expanded_content=analysis.get("expanded_content", []),
+            )
+            set_pages.append(page_id)
+
+        return {
+            "status": "ok",
+            "doc_id": doc_id,
+            "pages": set_pages,
+            "message": f"批量上下文已设置，共 {len(set_pages)} 页"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/v1/tutor/debug/{page_id}")
 async def debug_tutor_context(page_id: int):

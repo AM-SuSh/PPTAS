@@ -13,6 +13,7 @@ const slidesData = ref([]);
 const mindmapData = ref(null);
 const mindmapLoading = ref(false);
 const mindmapError = ref('');
+const docId = ref('');
 
 // 上传处理
 const handleFileUpload = async (file) => {
@@ -30,6 +31,7 @@ const handleFileUpload = async (file) => {
   try {
     const response = await pptApi.uploadAndExpand(file);
     slidesData.value = response.data.slides || [];
+    docId.value = response.data.doc_id || '';
     appState.value = 'workspace';
     buildMindmapForDeck().catch(err => console.error("思维导图生成失败:", err));
   } catch (error) {
@@ -55,6 +57,7 @@ const handleUrlUpload = async (url) => {
     }
     fileName.value = remoteName;
     slidesData.value = response.data.slides || [];
+    docId.value = response.data.doc_id || '';
     appState.value = 'workspace';
     buildMindmapForDeck().catch(err => console.error("思维导图生成失败:", err));
   } catch (error) {
@@ -139,6 +142,7 @@ const resetApp = () => {
   fileName.value = '';
   mindmapData.value = null;
   mindmapError.value = '';
+  docId.value = '';
 };
 </script>
 
@@ -176,6 +180,7 @@ const resetApp = () => {
         :mindmap="mindmapData"
         :mindmap-loading="mindmapLoading"
         :mindmap-error="mindmapError"
+        :doc-id="docId"
     />
   </div>
 </template>

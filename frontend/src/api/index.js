@@ -32,17 +32,18 @@ export const pptApi = {
     },
 
     // 新增方法 - 深度分析
-    analyzePage(pageId, title, content, rawPoints) {
+    analyzePage(pageId, title, content, rawPoints, docId = null) {
         return service.post('/analyze-page', {
             page_id: pageId,
             title,
             content,
-            raw_points: rawPoints
+            raw_points: rawPoints,
+            doc_id: docId
         })
     },
 
     // 新增方法 - 流式深度分析（实时接收结果）
-    async analyzePageStream(pageId, title, content, rawPoints, onChunk) {
+    async analyzePageStream(pageId, title, content, rawPoints, onChunk, docId = null) {
         try {
             const response = await fetch('/api/v1/analyze-page-stream', {
                 method: 'POST',
@@ -53,7 +54,8 @@ export const pptApi = {
                     page_id: pageId,
                     title,
                     content,
-                    raw_points: rawPoints
+                    raw_points: rawPoints,
+                    doc_id: docId
                 })
             })
 
@@ -113,6 +115,11 @@ export const pptApi = {
     })
 },
 
+    // 批量设置上下文（无需逐页翻阅）
+    setTutorContextBulk(docId) {
+        return service.post('/tutor/set-context-bulk', { doc_id: docId })
+    },
+
     // 新增方法 - AI 对话
     chat(pageId, message) {
         return service.post('/chat', {
@@ -126,6 +133,16 @@ export const pptApi = {
         return service.get('/tutor/conversation', {
             params: { page_id: pageId }
         })
+    },
+
+    // 获取单页历史分析
+    getPageAnalysis(docId, pageId) {
+        return service.get('/page-analysis', { params: { doc_id: docId, page_id: pageId } })
+    },
+
+    // 获取文档所有已保存分析
+    getAllPageAnalysis(docId) {
+        return service.get('/page-analysis/all', { params: { doc_id: docId } })
     },
 
     // 新增方法 - 搜索参考文献

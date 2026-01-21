@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { pptApi } from '../api/index.js'
 import ToolSidebar from './ToolSidebar.vue'
 import PPTPreview from './PPTPreview.vue'
@@ -9,13 +9,15 @@ const props = defineProps({
   slides: Array,
   mindmap: Object,
   mindmapLoading: Boolean,
-  mindmapError: String
+  mindmapError: String,
+  docId: String
 })
 
 const currentSlideIndex = ref(0)
 const activeTool = ref('explain')
 const isAnalyzing = ref(false)
 const analysisCache = ref({})  // 缓存分析结果
+const hasPreloaded = ref(false)
 
 const currentSlide = computed(() => props.slides[currentSlideIndex.value])
 
@@ -29,6 +31,17 @@ onMounted(async () => {
     }, 500)
   }
 })
+
+watch(
+  () => [props.docId, props.slides?.length],
+  async ([docId, len]) => {
+    if (docId && len && !hasPreloaded.value) {
+      await preloadCachedAnalyses()
+      hasPreloaded.value = true
+    }
+  },
+  { immediate: true }
+)
 
 // 将 Markdown 转换为 HTML（简单版本）
 const markdownToHtml = (markdown) => {
@@ -77,7 +90,8 @@ const analyzeCurrentPage = async () => {
       pageId,
       currentSlide.value.title || '',
       currentSlide.value.raw_content || '',
-      currentSlide.value.raw_points || []
+      currentSlide.value.raw_points || [],
+      props.docId || null
     )
 
     console.log('📥 后端响应状态:', analysisRes.status)
@@ -92,10 +106,10 @@ const analyzeCurrentPage = async () => {
       analysisData = analysisRes.data
     }
     
-    if (!analysisData || !analysisData.deep_analysis) {
-      console.error('❌ 响应格式错误或缺少 deep_analysis 字段')
+    if (!analysisData) {
+      console.error('❌ 响应格式错误，缺少 data')
       console.error('完整响应:', analysisRes.data)
-      throw new Error('后端返回的数据格式不正确，缺少 deep_analysis 字段')
+      throw new Error('后端返回的数据格式不正确')
     }
     
     console.log('✅ 成功提取分析数据:')
@@ -107,8 +121,8 @@ const analyzeCurrentPage = async () => {
     // 2. 更新页面数据
     const enrichedSlide = {
       ...currentSlide.value,
-      deep_analysis: analysisData.deep_analysis,
-      deep_analysis_html: markdownToHtml(analysisData.deep_analysis),
+      deep_analysis: analysisData.deep_analysis || analysisData.understanding_notes || '',
+      deep_analysis_html: markdownToHtml(analysisData.deep_analysis || analysisData.understanding_notes || ''),
       key_concepts: analysisData.key_concepts || [],
       learning_objectives: analysisData.learning_objectives || [],
       references: analysisData.references || [],
@@ -163,6 +177,36 @@ const selectSlide = async (index) => {
   console.log('📄 加载页面 ' + pageId + '，等待用户决定是否进行 AI 分析')
 }
 
+const preloadCachedAnalyses = async () => {
+  if (!props.docId) return
+  try {
+    const res = await pptApi.getAllPageAnalysis(props.docId)
+    const data = res.data?.data || {}
+    Object.entries(data).forEach(([pageStr, ana]) => {
+      const pageId = Number(pageStr)
+      const slideIdx = pageId - 1
+      if (!props.slides[slideIdx]) return
+      const enriched = {
+        ...props.slides[slideIdx],
+        ...(ana || {}),
+        deep_analysis: ana?.deep_analysis || ana?.understanding_notes || props.slides[slideIdx].deep_analysis || '',
+        deep_analysis_html: markdownToHtml(ana?.deep_analysis || ana?.understanding_notes || ''),
+        raw_points: ana.raw_points || props.slides[slideIdx].raw_points || []
+      }
+      analysisCache.value[pageId] = enriched
+      Object.assign(props.slides[slideIdx], enriched)
+    })
+    if (Object.keys(data).length > 0) {
+      console.log('✅ 已预加载历史分析页:', Object.keys(data))
+    }
+    // 预先为所有页设置助教上下文
+    await pptApi.setTutorContextBulk(props.docId)
+    console.log('🤖 已批量设置助教上下文')
+  } catch (err) {
+    console.warn('⚠️ 预加载历史分析失败:', err.message)
+  }
+}
+
 const handleToolChange = (toolName) => {
   activeTool.value = toolName
 }
@@ -188,6 +232,7 @@ const handleToolChange = (toolName) => {
           :mindmap-loading="mindmapLoading"
           :mindmap-error="mindmapError"
           :is-analyzing="isAnalyzing"
+          :doc-id="props.docId"
           @select-slide="selectSlide"
         />
         
