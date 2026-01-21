@@ -84,6 +84,7 @@ class PageAnalysisRequest(BaseModel):
     raw_points: Optional[list] = None
     key_concepts: Optional[list] = None  # 关键概念列表
     analysis: Optional[str] = None  # 深度分析内容
+    force: Optional[bool] = False  # 强制重新分析，忽略缓存
 
 
 class ReferenceSearchRequest(BaseModel):
@@ -370,7 +371,8 @@ async def analyze_page(
         页面深度分析结果（结构化分析、知识缺口、补充说明等）
     """
     try:
-        if request.doc_id:
+        # 如果 force=True，则忽略缓存，强制重新分析
+        if request.doc_id and not request.force:
             cached = persistence.get_page_analysis(request.doc_id, request.page_id)
             if cached:
                 return {"success": True, "cached": True, "data": cached}
@@ -447,10 +449,12 @@ async def analyze_page_stream(
     """
     async def event_generator():
         try:
-            # 缓存命中直接回放
-            if request.doc_id:
+            # 如果 force=False 且有缓存，则直接回放缓存
+            print(f"🔍 流式分析请求: doc_id={request.doc_id}, page_id={request.page_id}, force={request.force}")
+            if request.doc_id and not request.force:
                 cached = persistence.get_page_analysis(request.doc_id, request.page_id)
                 if cached:
+                    print(f"✅ 找到缓存分析结果，直接返回 (doc_id={request.doc_id}, page_id={request.page_id})")
                     yield f"data: {json.dumps({'stage': 'clustering', 'data': cached.get('knowledge_clusters', []), 'message': '已加载历史分析：知识聚类', 'cached': True})}\n\n"
                     yield f"data: {json.dumps({'stage': 'understanding', 'data': cached.get('understanding_notes', ''), 'message': '已加载历史分析：学习笔记', 'cached': True})}\n\n"
                     yield f"data: {json.dumps({'stage': 'gaps', 'data': cached.get('knowledge_gaps', []), 'message': '已加载历史分析：知识缺口', 'cached': True})}\n\n"
@@ -458,6 +462,16 @@ async def analyze_page_stream(
                     yield f"data: {json.dumps({'stage': 'retrieval', 'data': cached.get('references', []), 'message': '已加载历史分析：参考资料', 'cached': True})}\n\n"
                     yield f"data: {json.dumps({'stage': 'complete', 'data': cached, 'message': '历史分析加载完成', 'cached': True})}\n\n"
                     return
+                else:
+                    print(f"⚠️ 未找到缓存分析结果 (doc_id={request.doc_id}, page_id={request.page_id})")
+            elif not request.doc_id:
+                print(f"⚠️ doc_id 为空，无法检查缓存 (page_id={request.page_id})")
+            elif request.force:
+                print(f"🔄 强制重新分析，忽略缓存 (doc_id={request.doc_id}, page_id={request.page_id})")
+            
+            # 如果是强制重新分析，输出提示
+            if request.force:
+                yield f"data: {json.dumps({'stage': 'info', 'data': {}, 'message': '🔄 强制重新分析，忽略缓存...'})}\n\n"
 
             # 步骤1: 知识聚类
             print("⏳ 开始知识聚类...")
@@ -650,6 +664,18 @@ async def set_tutor_context(
         # 确保 page_id 是整数
         page_id = int(request.page_id)
         
+        # 检查上下文是否已存在（批量设置后应该已存在）
+        if page_id in service.page_context:
+            print(f"✅ 上下文已存在（批量设置已完成），跳过重复设置: page_id={page_id}")
+            greeting = service.get_assistant_greeting(page_id)
+            return {
+                "status": "ok",
+                "page_id": page_id,
+                "greeting": greeting,
+                "message": "页面上下文已存在（批量设置）",
+                "cached": True
+            }
+        
         print(f"🔧 设置上下文: page_id={page_id}, title={request.title}")
         
         # 提取知识集群信息（如果已分析过）
@@ -682,7 +708,8 @@ async def set_tutor_context(
             "status": "ok",
             "page_id": page_id,
             "greeting": greeting,
-            "message": "页面上下文已设置"
+            "message": "页面上下文已设置",
+            "cached": False
         }
     
     except Exception as e:
@@ -692,13 +719,19 @@ async def set_tutor_context(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class BulkContextRequest(BaseModel):
+    """批量上下文请求"""
+    doc_id: str
+
 @app.post("/api/v1/tutor/set-context-bulk")
 async def set_tutor_context_bulk(
-    doc_id: str = Body(..., embed=True, description="上传返回的文档ID"),
+    request: BulkContextRequest,
     persistence: PersistenceService = Depends(get_persistence_service),
 ):
     """为文档的所有页面批量设置上下文（优先使用已保存的分析结果）。"""
     try:
+        doc_id = request.doc_id
+        print(f"🚀 开始批量设置上下文，doc_id={doc_id}")
         service = get_ai_tutor()
         doc = persistence.get_document_by_id(doc_id)
         if not doc:
@@ -707,6 +740,8 @@ async def set_tutor_context_bulk(
         analyses = persistence.list_page_analyses(doc_id)
         slides = doc.get("slides", [])
         set_pages = []
+        
+        print(f"📄 文档共有 {len(slides)} 页，已保存分析 {len(analyses)} 页")
 
         for idx, slide in enumerate(slides):
             page_id = slide.get("page_num") or (idx + 1)
@@ -719,9 +754,12 @@ async def set_tutor_context_bulk(
                     [p.get("text", "") if isinstance(p, dict) else str(p) for p in raw_points]
                 )
 
+            title = analysis.get("title") or slide.get("title") or f"Page {page_id}"
+            print(f"  📄 设置页面 {page_id}: {title[:30]}... (有分析: {page_id in analyses})")
+            
             service.set_page_context(
                 page_id=page_id,
-                title=analysis.get("title") or slide.get("title") or f"Page {page_id}",
+                title=title,
                 content=content_text,
                 knowledge_clusters=analysis.get("knowledge_clusters", []),
                 understanding_notes=analysis.get("understanding_notes", ""),
@@ -730,6 +768,7 @@ async def set_tutor_context_bulk(
             )
             set_pages.append(page_id)
 
+        print(f"✅ 批量上下文设置完成，共 {len(set_pages)} 页: {set_pages}")
         return {
             "status": "ok",
             "doc_id": doc_id,

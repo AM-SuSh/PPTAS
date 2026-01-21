@@ -32,18 +32,19 @@ export const pptApi = {
     },
 
     // 新增方法 - 深度分析
-    analyzePage(pageId, title, content, rawPoints, docId = null) {
+    analyzePage(pageId, title, content, rawPoints, docId = null, force = false) {
         return service.post('/analyze-page', {
             page_id: pageId,
             title,
             content,
             raw_points: rawPoints,
-            doc_id: docId
+            doc_id: docId,
+            force: force
         })
     },
 
     // 新增方法 - 流式深度分析（实时接收结果）
-    async analyzePageStream(pageId, title, content, rawPoints, onChunk, docId = null) {
+    async analyzePageStream(pageId, title, content, rawPoints, onChunk, docId = null, force = false) {
         try {
             const response = await fetch('/api/v1/analyze-page-stream', {
                 method: 'POST',
@@ -55,7 +56,8 @@ export const pptApi = {
                     title,
                     content,
                     raw_points: rawPoints,
-                    doc_id: docId
+                    doc_id: docId,
+                    force: force
                 })
             })
 

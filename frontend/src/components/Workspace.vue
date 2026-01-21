@@ -35,9 +35,16 @@ onMounted(async () => {
 watch(
   () => [props.docId, props.slides?.length],
   async ([docId, len]) => {
+    console.log('👀 watch 触发: docId=', docId, 'slides.length=', len, 'hasPreloaded=', hasPreloaded.value)
     if (docId && len && !hasPreloaded.value) {
+      // 添加小延迟，确保所有数据都已准备好
+      await new Promise(resolve => setTimeout(resolve, 100))
+      console.log('🚀 开始预加载缓存分析...')
       await preloadCachedAnalyses()
       hasPreloaded.value = true
+      console.log('✅ 预加载完成')
+    } else {
+      console.log('⏭️ 跳过预加载:', { docId: !!docId, len: !!len, hasPreloaded: hasPreloaded.value })
     }
   },
   { immediate: true }
@@ -136,18 +143,24 @@ const analyzeCurrentPage = async () => {
     Object.assign(currentSlide.value, enrichedSlide)
     console.log('💾 分析结果已缓存')
 
-    // 4. 初始化助教
-    try {
-      console.log('🤖 初始化 AI 助教 (页面 ' + pageId + ')')
-      await pptApi.setTutorContext(
-        pageId,
-        currentSlide.value.title || '',
-        currentSlide.value.raw_content || '',
-        analysisData.key_concepts || []
-      )
-      console.log('✅ AI 助教初始化成功')
-    } catch (err) {
-      console.warn('⚠️ 初始化助教失败（非致命错误）:', err.message)
+    // 4. 初始化助教（如果批量设置已完成，则跳过单独设置）
+    // 注意：批量设置应该在 preloadCachedAnalyses 中完成
+    // 这里只在批量设置未完成时才单独设置
+    if (!hasPreloaded.value) {
+      try {
+        console.log('🤖 初始化 AI 助教 (页面 ' + pageId + ') - 批量设置未完成，单独设置')
+        await pptApi.setTutorContext(
+          pageId,
+          currentSlide.value.title || '',
+          currentSlide.value.raw_content || '',
+          analysisData.key_concepts || []
+        )
+        console.log('✅ AI 助教初始化成功')
+      } catch (err) {
+        console.warn('⚠️ 初始化助教失败（非致命错误）:', err.message)
+      }
+    } else {
+      console.log('✅ 批量设置已完成，跳过单独设置助教上下文')
     }
   } catch (error) {
     console.error('❌ 页面分析失败:', error)
@@ -168,8 +181,21 @@ const selectSlide = async (index) => {
   // 已缓存则直接使用
   if (analysisCache.value[pageId]) {
     const cached = analysisCache.value[pageId]
-    Object.assign(props.slides[index], cached)
-    console.log('✅ 使用缓存数据 (页面 ' + pageId + ')')
+    // 确保所有字段都被正确设置
+    Object.assign(props.slides[index], {
+      ...cached,
+      // 确保 deep_analysis 和 understanding_notes 都有值
+      deep_analysis: cached.deep_analysis || cached.understanding_notes || '',
+      understanding_notes: cached.understanding_notes || cached.deep_analysis || '',
+      deep_analysis_html: cached.deep_analysis_html || (cached.deep_analysis || cached.understanding_notes ? markdownToHtml(cached.deep_analysis || cached.understanding_notes || '') : '')
+    })
+    console.log('✅ 使用缓存数据 (页面 ' + pageId + '):', {
+      hasDeepAnalysis: !!(cached.deep_analysis && cached.deep_analysis.trim().length > 0),
+      hasUnderstandingNotes: !!(cached.understanding_notes && cached.understanding_notes.trim().length > 0),
+      knowledge_clusters: cached.knowledge_clusters?.length || 0,
+      knowledge_gaps: cached.knowledge_gaps?.length || 0,
+      expanded_content: cached.expanded_content?.length || 0
+    })
     return
   }
 
@@ -178,32 +204,74 @@ const selectSlide = async (index) => {
 }
 
 const preloadCachedAnalyses = async () => {
-  if (!props.docId) return
+  if (!props.docId) {
+    console.warn('⚠️ preloadCachedAnalyses: docId 为空，跳过')
+    return
+  }
+  console.log('📦 开始预加载缓存分析，docId:', props.docId, 'slides数量:', props.slides?.length)
   try {
+    // 先尝试获取已保存的分析
     const res = await pptApi.getAllPageAnalysis(props.docId)
     const data = res.data?.data || {}
+    console.log('📊 获取到已保存分析:', Object.keys(data).length, '页')
+    
     Object.entries(data).forEach(([pageStr, ana]) => {
       const pageId = Number(pageStr)
       const slideIdx = pageId - 1
       if (!props.slides[slideIdx]) return
+      
+      // 确保 understanding_notes 被正确映射到 deep_analysis
+      const understandingNotes = ana?.understanding_notes || ana?.deep_analysis || ''
+      const deepAnalysis = ana?.deep_analysis || understandingNotes || ''
+      
       const enriched = {
         ...props.slides[slideIdx],
         ...(ana || {}),
-        deep_analysis: ana?.deep_analysis || ana?.understanding_notes || props.slides[slideIdx].deep_analysis || '',
-        deep_analysis_html: markdownToHtml(ana?.deep_analysis || ana?.understanding_notes || ''),
+        // 确保两个字段都有值
+        understanding_notes: understandingNotes,
+        deep_analysis: deepAnalysis,
+        deep_analysis_html: deepAnalysis ? markdownToHtml(deepAnalysis) : '',
+        knowledge_clusters: ana?.knowledge_clusters || [],
+        knowledge_gaps: ana?.knowledge_gaps || [],
+        expanded_content: ana?.expanded_content || [],
+        references: ana?.references || [],
         raw_points: ana.raw_points || props.slides[slideIdx].raw_points || []
       }
+      
+      console.log(`📦 预加载页面 ${pageId} 分析数据:`, {
+        hasDeepAnalysis: !!deepAnalysis,
+        deep_analysis_length: deepAnalysis.length,
+        knowledge_clusters: enriched.knowledge_clusters.length,
+        knowledge_gaps: enriched.knowledge_gaps.length
+      })
+      
       analysisCache.value[pageId] = enriched
       Object.assign(props.slides[slideIdx], enriched)
     })
     if (Object.keys(data).length > 0) {
       console.log('✅ 已预加载历史分析页:', Object.keys(data))
     }
-    // 预先为所有页设置助教上下文
-    await pptApi.setTutorContextBulk(props.docId)
-    console.log('🤖 已批量设置助教上下文')
+    
+    // 预先为所有页设置助教上下文（无论是否有分析结果）
+    console.log('🤖 开始批量设置助教上下文，docId:', props.docId)
+    try {
+      const bulkRes = await pptApi.setTutorContextBulk(props.docId)
+      console.log('✅ 批量设置助教上下文完成:', bulkRes.data)
+    } catch (err) {
+      console.error('❌ 批量设置助教上下文失败:', err)
+      console.error('错误详情:', err.response?.data || err.message)
+    }
   } catch (err) {
-    console.warn('⚠️ 预加载历史分析失败:', err.message)
+    console.error('❌ 预加载历史分析失败:', err)
+    console.error('错误详情:', err.response?.data || err.message)
+    // 即使获取分析失败，也尝试批量设置上下文（使用原始 slides 数据）
+    console.log('🔄 尝试仅批量设置上下文（无分析数据）...')
+    try {
+      const bulkRes = await pptApi.setTutorContextBulk(props.docId)
+      console.log('✅ 批量设置助教上下文完成（无分析数据）:', bulkRes.data)
+    } catch (bulkErr) {
+      console.error('❌ 批量设置上下文也失败:', bulkErr)
+    }
   }
 }
 

@@ -150,6 +150,45 @@ class VectorStoreService:
         
         return "\n".join(text_parts)
     
+    def _split_long_chunk(self, text: str, max_chars: int) -> List[str]:
+        """将过长的文本块进一步分割成更小的块"""
+        if len(text) <= max_chars:
+            return [text]
+        
+        chunks = []
+        # 尝试按换行符分割
+        lines = text.split('\n')
+        current_chunk = []
+        current_length = 0
+        
+        for line in lines:
+            line_length = len(line) + 1  # +1 for newline
+            
+            if current_length + line_length > max_chars and current_chunk:
+                # 当前块已满，保存并开始新块
+                chunks.append('\n'.join(current_chunk))
+                current_chunk = [line]
+                current_length = line_length
+            else:
+                current_chunk.append(line)
+                current_length += line_length
+        
+        # 添加最后一个块
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
+        
+        # 如果某个块仍然过长（可能没有换行符），强制按字符分割
+        final_chunks = []
+        for chunk in chunks:
+            if len(chunk) > max_chars:
+                # 强制分割
+                for i in range(0, len(chunk), max_chars):
+                    final_chunks.append(chunk[i:i + max_chars])
+            else:
+                final_chunks.append(chunk)
+        
+        return final_chunks
+    
     def store_document_slides(
         self,
         file_name: str,
@@ -197,9 +236,31 @@ class VectorStoreService:
             # 如果文本较长，进行分块
             chunks = self.text_splitter.split_text(slide_text)
             
-            for chunk_index, chunk in enumerate(chunks):
+            # 进一步处理：确保每个 chunk 不超过 512 tokens（保守估计：1500 字符 ≈ 512 tokens）
+            # 如果超过，进一步分割
+            MAX_CHUNK_CHARS = 1500  # 保守估计，确保不超过 512 tokens
+            
+            final_chunks = []
+            for chunk in chunks:
                 if not chunk.strip():
                     continue
+                
+                # 如果 chunk 太长，进一步分割
+                if len(chunk) > MAX_CHUNK_CHARS:
+                    # 按句子或段落分割
+                    sub_chunks = self._split_long_chunk(chunk, MAX_CHUNK_CHARS)
+                    final_chunks.extend(sub_chunks)
+                else:
+                    final_chunks.append(chunk)
+            
+            for chunk_index, chunk in enumerate(final_chunks):
+                if not chunk.strip():
+                    continue
+                
+                # 再次检查长度，如果仍然过长则截断（最后的安全措施）
+                if len(chunk) > MAX_CHUNK_CHARS:
+                    chunk = chunk[:MAX_CHUNK_CHARS]
+                    print(f"  ⚠️  页面 {slide.get('page_num', 0)} 的 chunk {chunk_index} 过长，已截断至 {MAX_CHUNK_CHARS} 字符")
                 
                 # 创建文档
                 doc = Document(
@@ -211,7 +272,7 @@ class VectorStoreService:
                         "slide_title": slide.get("title", ""),
                         "slide_type": slide.get("type", "content"),
                         "chunk_index": chunk_index,
-                        "total_chunks": len(chunks),
+                        "total_chunks": len(final_chunks),
                         "stored_at": datetime.now().isoformat(),
                         **(metadata or {})
                     }

@@ -78,7 +78,8 @@ const initChat = async () => {
   try {
     isInitializingChat.value = true
     
-    // 1. 设置助教上下文
+    // 1. 设置助教上下文（后端会自动检查是否已存在，如果存在则跳过）
+    console.log('📞 调用单页设置上下文接口，page_id:', props.slide.page_num)
     const contextResponse = await pptApi.setTutorContext(
       props.slide.page_num,
       props.slide.title || '',
@@ -87,7 +88,11 @@ const initChat = async () => {
       props.slide.deep_analysis || ''
     )
     
-    console.log('✅ 上下文设置成功:', contextResponse.data)
+    if (contextResponse.data?.cached) {
+      console.log('✅ 上下文已存在（批量设置已完成），后端已跳过重复设置')
+    } else {
+      console.log('⚠️ 上下文不存在，已单独设置:', contextResponse.data?.message)
+    }
     
     // 2. 初始化消息（使用后端返回的欢迎语）
     const greeting = contextResponse.data?.greeting || 
@@ -120,27 +125,214 @@ const initChat = async () => {
 }
 
 // 触发 AI 分析
-const triggerAIAnalysis = () => {
+const triggerAIAnalysis = async (force = false) => {
   if (!props.slide?.page_num) return
+  
+  // 确保 force 是布尔值
+  force = Boolean(force)
+  
+  console.log('🎯 triggerAIAnalysis 被调用:', { 
+    force, 
+    forceType: typeof force,
+    page_num: props.slide.page_num,
+    stackTrace: new Error().stack?.split('\n').slice(0, 5).join('\n')
+  })
   
   shouldShowAIAnalysis.value = true
   
-  // 如果已经有分析结果，直接显示
-  if (props.slide?.deep_analysis && !props.slide.deep_analysis.includes('❌')) {
+  // 如果是强制重新分析，清除现有结果并重新分析
+  if (force) {
+    console.log('🔄 用户触发强制重新分析，页面 ' + props.slide.page_num)
+    // 清除现有分析结果
+    props.slide.deep_analysis = ''
+    props.slide.deep_analysis_html = ''
+    props.slide.knowledge_clusters = []
+    props.slide.knowledge_gaps = []
+    props.slide.expanded_content = []
+    props.slide.references = []
+    // 重置分析阶段状态
+    Object.keys(analysisStages.value).forEach(stage => {
+      analysisStages.value[stage].completed = false
+      analysisStages.value[stage].message = ''
+    })
+    // 重新分析
+    analyzePageWithAI(true)
     return
   }
   
-  // 如果没有分析结果，异步触发分析（不阻塞UI）
-  if (!props.slide?.deep_analysis) {
-    console.log('🤖 用户触发了 AI 分析，开始分析页面 ' + props.slide.page_num)
-    // 不使用 await，让分析在后台进行，不阻塞 UI
-    analyzePageWithAI()
+  // 检查是否有分析结果（检查多个可能的字段）
+  // 先尝试从 slide 对象中获取数据
+  // 注意：直接使用 props.slide，不要创建新对象，以保持响应式
+  const slide = props.slide
+  
+  if (!slide) {
+    console.warn('⚠️ slide 对象为空，无法进行分析')
+    return
   }
+  
+  // 如果 docId 存在，先尝试从后端获取缓存（如果前端数据不完整）
+  // 这样可以确保即使前端数据没有正确加载，也能从后端获取缓存
+  if (props.docId && slide.page_num) {
+    console.log('🔍 有 docId，先尝试从后端获取缓存（确保数据完整性）...')
+    try {
+      const cachedRes = await pptApi.getPageAnalysis(props.docId, slide.page_num)
+      const cachedData = cachedRes.data?.data
+      console.log('📦 后端返回的缓存数据:', {
+        hasData: !!cachedData,
+        hasUnderstandingNotes: !!(cachedData?.understanding_notes),
+        hasDeepAnalysis: !!(cachedData?.deep_analysis),
+        understandingNotesLength: cachedData?.understanding_notes?.length || 0,
+        deepAnalysisLength: cachedData?.deep_analysis?.length || 0
+      })
+      if (cachedData && (cachedData.understanding_notes || cachedData.deep_analysis)) {
+        console.log('✅ 从后端获取到缓存分析结果，合并到 slide 对象')
+        // 将缓存数据合并到 slide 对象
+        const understandingNotes = cachedData.understanding_notes || cachedData.deep_analysis || ''
+        const deepAnalysis = cachedData.deep_analysis || understandingNotes || ''
+        // 直接修改 props.slide 的属性，保持响应式
+        Object.assign(slide, {
+          ...cachedData,
+          understanding_notes: understandingNotes,
+          deep_analysis: deepAnalysis,
+          deep_analysis_html: deepAnalysis ? markdownToHtml(deepAnalysis) : ''
+        })
+        // 更新分析阶段状态
+        Object.keys(analysisStages.value).forEach(stage => {
+          if (stage === 'complete') {
+            analysisStages.value[stage].completed = true
+            analysisStages.value[stage].message = '分析已完成'
+          }
+        })
+        console.log('✅ 缓存数据已合并到 slide 对象，直接显示，不重新分析')
+        return
+      } else {
+        console.log('⚠️ 后端返回的缓存数据为空或不完整')
+      }
+    } catch (err) {
+      console.warn('⚠️ 从后端获取缓存失败:', err.message)
+    }
+  }
+  
+  // 如果 docId 存在，先尝试从后端获取缓存（如果前端数据不完整）
+  // 但这里先检查前端数据，如果前端有数据就不需要调用后端
+  const deepAnalysis = slide.deep_analysis || slide.understanding_notes || ''
+  const hasDeepAnalysis = deepAnalysis && 
+                          typeof deepAnalysis === 'string' &&
+                          !deepAnalysis.includes('❌') &&
+                          deepAnalysis.trim().length > 0
+  
+  // 检查是否有其他分析数据（知识聚类、知识缺口等）
+  const hasOtherAnalysis = (slide.knowledge_clusters && Array.isArray(slide.knowledge_clusters) && slide.knowledge_clusters.length > 0) ||
+                          (slide.knowledge_gaps && Array.isArray(slide.knowledge_gaps) && slide.knowledge_gaps.length > 0) ||
+                          (slide.expanded_content && Array.isArray(slide.expanded_content) && slide.expanded_content.length > 0) ||
+                          (slide.references && Array.isArray(slide.references) && slide.references.length > 0)
+  
+  // 如果前端没有数据，但有 docId，说明可能有缓存但前端还没加载
+  // 这种情况下，让后端检查缓存，如果后端有缓存会直接返回
+  const hasAnalysis = hasDeepAnalysis || hasOtherAnalysis
+  
+  console.log('🔍 检查分析结果:', {
+    page_num: slide.page_num,
+    hasDeepAnalysis,
+    hasOtherAnalysis,
+    hasAnalysis,
+    deep_analysis: deepAnalysis ? (typeof deepAnalysis === 'string' ? deepAnalysis.substring(0, 50) + '...' : '非字符串') : '无',
+    deep_analysis_type: typeof slide.deep_analysis,
+    understanding_notes_type: typeof slide.understanding_notes,
+    knowledge_clusters: slide.knowledge_clusters?.length || 0,
+    knowledge_gaps: slide.knowledge_gaps?.length || 0,
+    expanded_content: slide.expanded_content?.length || 0,
+    references: slide.references?.length || 0,
+    slide_keys: Object.keys(slide),
+    docId: props.docId
+  })
+  
+  // 先检查前端是否有分析结果
+  if (hasAnalysis) {
+    console.log('✅ 已有分析结果，直接显示，不重新分析')
+    // 如果只有 understanding_notes 但没有 deep_analysis，需要转换
+    if (slide.understanding_notes && !slide.deep_analysis) {
+      slide.deep_analysis = slide.understanding_notes
+      slide.deep_analysis_html = markdownToHtml(slide.understanding_notes)
+    }
+    // 确保分析阶段状态显示为已完成
+    Object.keys(analysisStages.value).forEach(stage => {
+      if (stage === 'complete') {
+        analysisStages.value[stage].completed = true
+        analysisStages.value[stage].message = '分析已完成'
+      }
+    })
+    return
+  }
+  
+  // 如果前端没有检测到分析结果，但有 docId，先尝试从后端获取缓存
+  // 这样可以避免不必要的重新分析（这里应该不会执行，因为上面已经检查过了）
+  if (!hasAnalysis && props.docId && slide.page_num) {
+    console.log('🔍 前端未检测到分析结果，但有 docId，尝试从后端获取缓存...')
+    try {
+      const cachedRes = await pptApi.getPageAnalysis(props.docId, slide.page_num)
+      const cachedData = cachedRes.data?.data
+      console.log('📦 后端返回的缓存数据:', {
+        hasData: !!cachedData,
+        hasUnderstandingNotes: !!(cachedData?.understanding_notes),
+        hasDeepAnalysis: !!(cachedData?.deep_analysis),
+        understandingNotesLength: cachedData?.understanding_notes?.length || 0,
+        deepAnalysisLength: cachedData?.deep_analysis?.length || 0
+      })
+      if (cachedData && (cachedData.understanding_notes || cachedData.deep_analysis)) {
+        console.log('✅ 从后端获取到缓存分析结果，直接使用')
+        // 将缓存数据合并到 slide 对象
+        const understandingNotes = cachedData.understanding_notes || cachedData.deep_analysis || ''
+        const deepAnalysis = cachedData.deep_analysis || understandingNotes || ''
+        // 直接修改 props.slide 的属性，保持响应式
+        Object.assign(slide, {
+          ...cachedData,
+          understanding_notes: understandingNotes,
+          deep_analysis: deepAnalysis,
+          deep_analysis_html: deepAnalysis ? markdownToHtml(deepAnalysis) : ''
+        })
+        // 更新分析阶段状态
+        Object.keys(analysisStages.value).forEach(stage => {
+          if (stage === 'complete') {
+            analysisStages.value[stage].completed = true
+            analysisStages.value[stage].message = '分析已完成'
+          }
+        })
+        console.log('✅ 缓存数据已合并到 slide 对象')
+        return
+      } else {
+        console.log('⚠️ 后端返回的缓存数据为空或不完整')
+      }
+    } catch (err) {
+      console.warn('⚠️ 从后端获取缓存失败，将继续正常分析流程:', err.message)
+    }
+  }
+  
+  console.log('⚠️ 未检测到分析结果，将调用 API 进行分析（force=false，后端会检查缓存）')
+  
+  // 如果没有分析结果，异步触发分析（不阻塞UI）
+  // 注意：这里传递 force=false，后端会检查缓存
+  console.log('🤖 用户触发了 AI 分析，开始分析页面 ' + props.slide.page_num + ' (force=false)')
+  // 不使用 await，让分析在后台进行，不阻塞 UI
+  analyzePageWithAI(false)
 }
 
 // AI 分析函数（后台异步执行，不阻塞UI）
-const analyzePageWithAI = async () => {
+const analyzePageWithAI = async (force = false) => {
   const pageId = props.slide.page_num || 1
+  
+  // 确保 force 是布尔值
+  force = Boolean(force)
+  
+  console.log('🚀 analyzePageWithAI 被调用:', { 
+    pageId, 
+    force, 
+    forceType: typeof force,
+    docId: props.docId,
+    hasDeepAnalysis: !!(props.slide?.deep_analysis && props.slide.deep_analysis.trim().length > 0),
+    hasUnderstandingNotes: !!(props.slide?.understanding_notes && props.slide.understanding_notes.trim().length > 0),
+    stackTrace: new Error().stack?.split('\n').slice(0, 5).join('\n')
+  })
   
   try {
     isAnalyzingPage.value = true
@@ -151,7 +343,12 @@ const analyzePageWithAI = async () => {
       analysisStages.value[stage].message = ''
     })
     
-    console.log('📤 发送流式 AI 分析请求...')
+    const docId = props.docId || null
+    console.log('📤 发送流式 AI 分析请求...', {
+      pageId,
+      docId,
+      force: force ? '(强制重新分析)' : '(正常分析，会检查缓存)'
+    })
     
     // 初始化分析数据容器
     let analysisData = {
@@ -171,7 +368,9 @@ const analyzePageWithAI = async () => {
       props.slide.raw_points || [],
       (chunk) => {
         // 每收到一个 chunk 就立即更新 UI
-        console.log('📨 收到流式数据:', chunk.stage, '-', chunk.message)
+        const isCached = chunk.cached === true
+        const prefix = isCached ? '📦 [缓存]' : '📨'
+        console.log(`${prefix} 收到流式数据:`, chunk.stage, '-', chunk.message)
         
         // 更新阶段状态
         if (analysisStages.value[chunk.stage]) {
@@ -182,37 +381,53 @@ const analyzePageWithAI = async () => {
         if (chunk.stage === 'clustering') {
           // 知识聚类结果
           analysisData.knowledge_clusters = chunk.data || []
-          console.log('📊 知识聚类完成:', analysisData.knowledge_clusters.length, '个概念')
+          console.log(`${prefix} 知识聚类完成:`, analysisData.knowledge_clusters.length, '个概念')
         } 
         else if (chunk.stage === 'understanding') {
           // 学习笔记
           analysisData.understanding_notes = chunk.data || ''
-          console.log('📝 学习笔记生成完成')
+          console.log(`${prefix} 学习笔记生成完成`)
         }
         else if (chunk.stage === 'gaps') {
           // 知识缺口
           analysisData.knowledge_gaps = chunk.data || []
-          console.log('❓ 缺口识别完成:', analysisData.knowledge_gaps.length, '个缺口')
+          console.log(`${prefix} 缺口识别完成:`, analysisData.knowledge_gaps.length, '个缺口')
         }
         else if (chunk.stage === 'expansion') {
           // 知识扩展
           analysisData.expanded_content = chunk.data || []
-          console.log('📚 知识扩展完成:', analysisData.expanded_content.length, '条补充')
+          console.log(`${prefix} 知识扩展完成:`, analysisData.expanded_content.length, '条补充')
         }
         else if (chunk.stage === 'retrieval') {
           // 参考文献
           analysisData.references = chunk.data || []
-          console.log('🔗 参考文献检索完成:', analysisData.references.length, '条参考')
+          console.log(`${prefix} 参考文献检索完成:`, analysisData.references.length, '条参考')
         }
         else if (chunk.stage === 'complete') {
           // 最终完成
-          console.log('✅ 分析完全完成')
+          if (chunk.data) {
+            // 如果 complete 阶段有完整数据，直接使用
+            analysisData = {
+              knowledge_clusters: chunk.data.knowledge_clusters || analysisData.knowledge_clusters,
+              understanding_notes: chunk.data.understanding_notes || analysisData.understanding_notes,
+              knowledge_gaps: chunk.data.knowledge_gaps || analysisData.knowledge_gaps,
+              expanded_content: chunk.data.expanded_content || analysisData.expanded_content,
+              references: chunk.data.references || analysisData.references,
+              page_structure: chunk.data.page_structure || analysisData.page_structure
+            }
+          }
+          console.log(`${prefix} 分析完全完成`, isCached ? '(来自缓存)' : '(新生成)')
+        }
+        else if (chunk.stage === 'info') {
+          // 信息提示（如强制重新分析的提示）
+          console.log('ℹ️', chunk.message)
         }
         
         // 实时更新 slide 对象
         updateSlideWithAnalysis(analysisData)
       },
-      props.docId || null
+      docId,
+      force
     )
     
   } catch (error) {
@@ -225,29 +440,36 @@ const analyzePageWithAI = async () => {
 
 // 更新 slide 对象的分析数据
 const updateSlideWithAnalysis = (analysisData) => {
-  if (analysisData.knowledge_clusters?.length > 0) {
-    props.slide.knowledge_clusters = analysisData.knowledge_clusters
+  // 更新知识聚类
+  if (analysisData.knowledge_clusters !== undefined) {
+    props.slide.knowledge_clusters = analysisData.knowledge_clusters || []
   }
   
-  if (analysisData.understanding_notes) {
-    props.slide.deep_analysis = analysisData.understanding_notes
-    props.slide.deep_analysis_html = markdownToHtml(analysisData.understanding_notes)
+  // 更新学习笔记（understanding_notes）
+  if (analysisData.understanding_notes !== undefined) {
+    const notes = analysisData.understanding_notes || ''
+    props.slide.deep_analysis = notes
+    props.slide.deep_analysis_html = notes ? markdownToHtml(notes) : ''
   }
   
-  if (analysisData.knowledge_gaps?.length > 0) {
-    props.slide.knowledge_gaps = analysisData.knowledge_gaps
+  // 更新知识缺口
+  if (analysisData.knowledge_gaps !== undefined) {
+    props.slide.knowledge_gaps = analysisData.knowledge_gaps || []
   }
   
-  if (analysisData.expanded_content?.length > 0) {
-    props.slide.expanded_content = analysisData.expanded_content
+  // 更新扩展内容
+  if (analysisData.expanded_content !== undefined) {
+    props.slide.expanded_content = analysisData.expanded_content || []
   }
   
-  if (analysisData.references?.length > 0) {
-    props.slide.references = analysisData.references
+  // 更新参考文献
+  if (analysisData.references !== undefined) {
+    props.slide.references = analysisData.references || []
   }
   
-  if (analysisData.page_structure) {
-    props.slide.page_structure = analysisData.page_structure
+  // 更新页面结构
+  if (analysisData.page_structure !== undefined) {
+    props.slide.page_structure = analysisData.page_structure || {}
   }
 }
 
@@ -588,7 +810,7 @@ const formatTime = (timestamp) => {
         <div class="ai-analysis-trigger">
           <button 
             v-if="!shouldShowAIAnalysis"
-            @click="triggerAIAnalysis"
+            @click.stop="triggerAIAnalysis(false)"
             :disabled="isAnalyzingPage"
             class="btn-analyze-page"
           >
@@ -598,7 +820,7 @@ const formatTime = (timestamp) => {
           </button>
           <button 
             v-else
-            @click="shouldShowAIAnalysis = false"
+            @click.stop="shouldShowAIAnalysis = false"
             :disabled="isAnalyzingPage"
             class="btn-analyze-page btn-collapse"
           >
@@ -608,7 +830,21 @@ const formatTime = (timestamp) => {
 
         <!-- AI 深度分析 - 仅在用户点击按钮时显示 -->
         <div v-if="shouldShowAIAnalysis" class="card ai-card">
-          <h3 class="card-title">🤖 AI 深度解析</h3>
+          <div class="card-header-with-action">
+            <h3 class="card-title">🤖 AI 深度解析</h3>
+            <button 
+              v-if="props.slide?.deep_analysis && !props.slide.deep_analysis.includes('❌') && !isAnalyzingPage"
+              @click.stop="triggerAIAnalysis(true)"
+              class="btn-reanalyze"
+              title="重新生成AI分析结果"
+            >
+              🔄 重新分析
+            </button>
+            <div v-else-if="isAnalyzingPage" class="reanalyze-status">
+              <span class="analyzing-spinner">⏳</span>
+              <span>重新分析中...</span>
+            </div>
+          </div>
           
           <!-- 学习目标 -->
           <div v-if="learningObjectives.length > 0" class="analysis-section">
@@ -2066,6 +2302,56 @@ const formatTime = (timestamp) => {
 .btn-analyze-page.btn-collapse:hover:not(:disabled) {
   background: linear-gradient(135deg, #4b5563 0%, #374151 100%);
   box-shadow: 0 6px 16px rgba(107, 114, 128, 0.4);
+}
+
+/* 卡片标题和操作按钮布局 */
+.card-header-with-action {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.card-header-with-action .card-title {
+  margin: 0;
+  flex: 1;
+}
+
+/* 重新分析按钮样式 */
+.btn-reanalyze {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.btn-reanalyze:hover {
+  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-reanalyze:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.3);
+}
+
+.reanalyze-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #64748b;
+  font-size: 0.9rem;
+  font-weight: 500;
 }
 
 /* 加载动画 */
