@@ -1,0 +1,19 @@
+services:
+  backend:
+    build: ./backend
+    container_name: pptas-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/ppt_vector_db:/app/ppt_vector_db
+      - ./backend/config.json:/app/config.json
+    restart: always
+
+  frontend:
+    build: ./frontend
+    container_name: pptas-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
