@@ -630,8 +630,6 @@ const formatTime = (timestamp) => {
 
           <!-- 深度解析内容 -->
           <div class="analysis-section">
-            <h4 class="section-title">🤖 AI 深度解析内容</h4>
-            
             <!-- 分析进度显示 -->
             <div v-if="isAnalyzingPage" class="analysis-progress">
               <div class="progress-title">📊 分析进度</div>
