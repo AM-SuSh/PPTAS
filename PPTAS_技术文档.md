@@ -1980,10 +1980,10 @@ except Exception as e:
 
 **日志示例**:
 ```python
-print(f"📝 发送给LLM的文本长度: {len(ppt_summary)} 字符")
-print(f"📥 LLM返回的原始内容: {response.content[:500]}...")
-print(f"✅ 解析成功: 主题={result.get('main_topic', '未知')}, 章节数={len(result.get('chapters', []))}")
-print(f"❌ JSON解析失败: {e}")
+print(f" 发送给LLM的文本长度: {len(ppt_summary)} 字符")
+print(f" LLM返回的原始内容: {response.content[:500]}...")
+print(f" 解析成功: 主题={result.get('main_topic', '未知')}, 章节数={len(result.get('chapters', []))}")
+print(f" JSON解析失败: {e}")
 ```
 
 ---
