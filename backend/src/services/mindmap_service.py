@@ -129,7 +129,6 @@ class MindmapService:
             root.children.append(current_section)
             return current_section
 
-        # default section
         _ensure_section("未分组")
 
         for slide in slides:
@@ -137,15 +136,12 @@ class MindmapService:
             slide_title = str(slide.get("title") or f"Slide {slide.get('page_num', '')}").strip()
             page_num = slide.get("page_num")
 
-            # infer section boundaries
             if slide_type in {"section"}:
                 _ensure_section(slide_title or "章节")
                 continue
             if slide_type in {"cover"}:
-                # use cover as deck title hint (but keep current section)
                 if slide_title:
                     root.label = slide_title
-                # keep default section
                 continue
             if slide_type in {"toc"}:
                 _ensure_section("目录")
@@ -164,7 +160,6 @@ class MindmapService:
             )
             (current_section or root).children.append(slide_node)
 
-            # reuse build_mindmap logic for points, but attach under slide_node
             sub_tree = self.build_mindmap(
                 title=slide_title,
                 raw_points=slide.get("raw_points") or [],
@@ -220,7 +215,6 @@ class MindmapService:
         
         node_counter = 0
         
-        # 添加知识流程节点
         knowledge_flow = global_analysis.get("knowledge_flow", "").strip()
         if knowledge_flow:
             node_counter += 1
@@ -231,7 +225,6 @@ class MindmapService:
             )
             root.children.append(flow_node)
         
-        # 添加章节节点
         chapters = global_analysis.get("chapters", [])
         if chapters:
             node_counter += 1
@@ -259,7 +252,6 @@ class MindmapService:
                 )
                 chapters_node.children.append(chapter_node)
                 
-                # 添加章节的核心概念
                 for concept in key_concepts[:max_children_per_node]:
                     if not concept or not str(concept).strip():
                         continue
