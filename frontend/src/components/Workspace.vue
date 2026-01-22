@@ -456,24 +456,13 @@ const toggleExportOptions = () => {
               {{ globalAnalysisResult.main_topic || '未知主题' }} 
               ({{ globalAnalysisResult.knowledge_units?.length || 0 }} 个知识点)
             </span>
-            <span v-else class="info-value">未分析</span>
+            <span v-else class="info-value">分析中...</span>
           </div>
           <button 
-            @click="triggerGlobalAnalysis(false)"
-            :disabled="isAnalyzingGlobal"
-            class="btn-global-analyze"
-            title="进行全局分析，获取文档主题和知识点框架"
-          >
-            <span v-if="isAnalyzingGlobal" class="analyzing-spinner">⏳</span>
-            <span v-else>🌐</span>
-            {{ isAnalyzingGlobal ? '分析中...' : '全局分析' }}
-          </button>
-          <button 
-            v-if="globalAnalysisResult"
             @click="triggerGlobalAnalysis(true)"
             :disabled="isAnalyzingGlobal"
             class="btn-global-reanalyze"
-            title="强制重新进行全局分析"
+            title="重新进行全局分析（系统已自动分析，此按钮用于强制重新分析）"
           >
             <span v-if="isAnalyzingGlobal" class="analyzing-spinner">⏳</span>
             <span v-else>🔄</span>
@@ -657,7 +646,6 @@ const toggleExportOptions = () => {
   border-radius: 4px;
 }
 
-.btn-global-analyze,
 .btn-global-reanalyze,
 .btn-export {
   padding: 8px 16px;
@@ -673,18 +661,6 @@ const toggleExportOptions = () => {
   white-space: nowrap;
 }
 
-.btn-global-analyze {
-  background: rgba(255, 255, 255, 0.25);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-}
-
-.btn-global-analyze:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.35);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-}
-
 .btn-global-reanalyze {
   background: rgba(255, 193, 7, 0.9);
   color: #333;
@@ -697,7 +673,6 @@ const toggleExportOptions = () => {
   box-shadow: 0 2px 8px rgba(255, 193, 7, 0.4);
 }
 
-.btn-global-analyze:disabled,
 .btn-global-reanalyze:disabled {
   opacity: 0.6;
   cursor: not-allowed;
