@@ -3,6 +3,7 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { pptApi } from '../api/index.js'
 import MindmapGraph from './MindmapGraph.vue'
 import SemanticSearch from './SemanticSearch.vue'
+import ExternalSearch from './ExternalSearch.vue'
 
 const props = defineProps({
   slide: Object,
@@ -1000,10 +1001,15 @@ const formatTime = (timestamp) => {
         :current-file-name="slide?.file_name || null"
         @select-slide="emit('select-slide', $event)"
       />
+    </div>
+
+    <div v-if="activeTool === 'external-search'" class="view-section external-search-view">
+      <!-- 外部资源搜索组件 - 搜索 Wikipedia、Arxiv、Web -->
+      <ExternalSearch />
       
-      <!-- 外部资源搜索（保留作为补充） -->
-      <div class="external-search-section" style="margin-top: 2rem;">
-        <h3 style="margin-bottom: 1rem; color: #1e293b; font-size: 1.1rem;">🌐 外部资源搜索</h3>
+      <!-- 保留原有的简单搜索作为备用（可选） -->
+      <div v-if="false" class="external-search-section-legacy" style="margin-top: 2rem;">
+        <h3 style="margin-bottom: 1rem; color: #1e293b; font-size: 1.1rem;">🌐 外部资源搜索（旧版）</h3>
         <div class="search-bar">
           <input v-model="searchQuery" type="text" placeholder="输入关键词搜索学术资源..." class="search-input" />
           <button @click="handleSearch" class="search-btn">🔍</button>
@@ -1082,25 +1088,30 @@ const formatTime = (timestamp) => {
 .content-view {
   height: 100%;
   overflow-y: auto;
-  padding: 2rem;
+  padding: 1rem;
   background: #ffffff;
 }
 
 .view-section {
   animation: fadeIn 0.3s ease;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .content-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 2rem;
+  margin-bottom: 0.75rem;
   border-bottom: 2px solid #f1f5f9;
-  padding-bottom: 1rem;
+  padding-bottom: 0.5rem;
 }
 
 .slide-title {
-  font-size: 1.8rem;
+  font-size: 1.5rem;
   color: #1e293b;
   margin: 0;
 }
@@ -1633,11 +1644,13 @@ const formatTime = (timestamp) => {
   align-items: stretch;
   justify-content: flex-start;
   height: 100%;
-  min-height: 60vh;
+  width: 100%;
+  overflow: hidden;
 }
 
 .mindmap-header {
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
+  flex-shrink: 0;
 }
 
 .mindmap-tree-wrapper {
@@ -1646,12 +1659,12 @@ const formatTime = (timestamp) => {
   padding: 0;
   background: #f8fafc;
   overflow: hidden;
-  height: calc(100vh - 280px);
-  min-height: 500px;
   flex: 1;
   display: flex;
   flex-direction: column;
   position: relative;
+  min-height: 0;
+  width: 100%;
 }
 
 .mindmap-loading,

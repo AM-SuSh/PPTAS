@@ -5,7 +5,10 @@
     "model": "deepseek-ai/DeepSeek-V3.2-Exp"
   },
   "retrieval": {
-    "preferred_sources": ["arxiv", "wikipedia"],
+    "preferred_sources": [
+      "arxiv",
+      "wikipedia"
+    ],
     "max_results": 3,
     "local_rag_priority": true
   },
@@ -27,6 +30,6 @@
     "path": "./ppt_vector_db",
     "chunk_size": 1000,
     "chunk_overlap": 200,
-    "embedding_model": "text-embedding-ada-002"
+    "embedding_model": "BAAI/bge-m3"
   }
 }

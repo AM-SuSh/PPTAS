@@ -8,7 +8,8 @@ const emit = defineEmits(['tool-change'])
 const tools = [
   { id: 'explain', icon: '🧠', label: '深度解析' },
   { id: 'state-of-art', icon: '🕸️', label: '思维导图' },
-  { id: 'search', icon: '🌐', label: '多维搜索' },
+  { id: 'search', icon: '🔍', label: '语义搜索' },
+  { id: 'external-search', icon: '🌐', label: '外部资源' },
   { id: 'chat', icon: '💬', label: 'AI 问答' }
 ]
 </script>

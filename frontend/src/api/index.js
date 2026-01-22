@@ -245,5 +245,14 @@ export const pptApi = {
         }, {
             responseType: 'blob'  // 重要：接收二进制文件
         })
+    },
+
+    // 新增方法 - 外部资源搜索（Wikipedia、Arxiv、Web）
+    searchExternal(query, sources = null, maxResults = 10) {
+        return service.post('/search-external', {
+            query,
+            sources,  // ["wikipedia", "arxiv", "web"] 或 null（全部）
+            max_results: maxResults
+        })
     }
 }

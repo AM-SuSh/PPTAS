@@ -103,13 +103,22 @@ const onWheel = (e) => {
 }
 
 const startPan = (e) => {
+  // 检查是否点击在按钮、工具栏或节点上
+  const target = e.target
+  if (target.closest('.toolbar') || target.closest('.toolbar-btn') || 
+      target.closest('.node-group') || target.closest('.detail-panel')) {
+    return
+  }
+  
   if (e.button !== 0) return // 仅限左键
+  e.preventDefault()
   isPanning.value = true
   lastPos.value = {x: e.clientX, y: e.clientY}
 }
 
 const doPan = (e) => {
   if (!isPanning.value) return
+  e.preventDefault()
   const dx = e.clientX - lastPos.value.x
   const dy = e.clientY - lastPos.value.y
   pan.value.x += dx
@@ -117,7 +126,12 @@ const doPan = (e) => {
   lastPos.value = {x: e.clientX, y: e.clientY}
 }
 
-const endPan = () => isPanning.value = false
+const endPan = (e) => {
+  if (isPanning.value) {
+    e?.preventDefault()
+  }
+  isPanning.value = false
+}
 
 // 初始化视图位置
 watch(() => props.root, () => {
@@ -404,25 +418,25 @@ const exportAsPNG = async () => {
 
 <template>
   <div class="mindmap-container" ref="containerRef"
-       @mousedown="startPan" @mousemove="doPan" @mouseup="endPan" @mouseleave="endPan">
+       @mousemove="doPan" @mouseup="endPan" @mouseleave="endPan">
 
     <!-- 工具栏 -->
-    <div class="toolbar">
-      <button @click="toggleFullscreen" class="toolbar-btn" title="全屏显示">
+    <div class="toolbar" @mousedown.stop @click.stop>
+      <button @click.stop="toggleFullscreen" class="toolbar-btn" title="全屏显示">
         <span v-if="!isFullscreen">⛶</span>
         <span v-else>⛶</span>
         全屏
       </button>
-      <button @click="exportAsSVG" class="toolbar-btn" title="导出为SVG">
+      <button @click.stop="exportAsSVG" class="toolbar-btn" title="导出为SVG">
         📥 SVG
       </button>
-      <button @click="exportAsPNG" class="toolbar-btn" title="导出为PNG">
+      <button @click.stop="exportAsPNG" class="toolbar-btn" title="导出为PNG">
         📥 PNG
       </button>
     </div>
 
     <!-- 画布主体 -->
-    <svg class="mindmap-svg" ref="svgRef">
+    <svg class="mindmap-svg" ref="svgRef" @mousedown="startPan">
       <defs>
         <filter id="nodeShadow" x="-20%" y="-20%" width="140%" height="140%">
           <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
@@ -438,6 +452,7 @@ const exportAsPNG = async () => {
         <g v-for="node in layout.nodes" :key="node.id"
            class="node-group" :class="{ 'is-selected': selected?.id === node.id }"
            :transform="`translate(${node._x}, ${node._y - 20})`"
+           @mousedown.stop
            @click.stop="selected = node">
 
           <rect class="node-card" :width="node._width" height="40" rx="8"/>
@@ -451,7 +466,7 @@ const exportAsPNG = async () => {
 
     <!-- 底部操作提示 -->
     <div class="controls-hint">
-      滚轮缩放 · 左键按住拖拽 · 点击查看详情
+      滚轮缩放 · 左键按住拖拽
     </div>
 
     <!-- 悬浮详情面板 (不再挤占空间) -->
@@ -498,7 +513,7 @@ const exportAsPNG = async () => {
 .mindmap-container {
   position: relative;
   width: 100%;
-  height: 100%;
+  height: 650px;
   background-color: #fcfcfd;
   background-image: radial-gradient(#e5e7eb 1px, transparent 1px);
   background-size: 30px 30px;
@@ -514,6 +529,7 @@ const exportAsPNG = async () => {
   width: 100%;
   height: 100%;
   display: block;
+  pointer-events: all;
 }
 
 /* 连线样式 */
@@ -559,10 +575,10 @@ const exportAsPNG = async () => {
 /* 详情面板 (浮动) */
 .detail-panel {
   position: absolute;
-  top: 20px;
-  right: 20px;
+  top: 70px;
+  right: 10px;
   width: 320px;
-  max-height: calc(100% - 40px);
+  max-height: calc(100% - 80px);
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
   border-radius: 16px;
@@ -570,7 +586,8 @@ const exportAsPNG = async () => {
   border: 1px solid rgba(226, 232, 240, 0.8);
   display: flex;
   flex-direction: column;
-  z-index: 100;
+  z-index: 40;
+  pointer-events: auto;
 }
 
 .detail-header {
@@ -666,7 +683,7 @@ const exportAsPNG = async () => {
 
 .controls-hint {
   position: absolute;
-  bottom: 20px;
+  bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
   background: rgba(15, 23, 42, 0.7);
@@ -676,21 +693,23 @@ const exportAsPNG = async () => {
   font-size: 12px;
   backdrop-filter: blur(4px);
   pointer-events: none;
+  z-index: 30;
 }
 
 .toolbar {
   position: absolute;
-  top: 20px;
-  right: 20px;
+  top: 10px;
+  right: 10px;
   display: flex;
   gap: 8px;
-  z-index: 10;
+  z-index: 50;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
   padding: 8px;
   border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   border: 1px solid rgba(226, 232, 240, 0.8);
+  pointer-events: auto;
 }
 
 .toolbar-btn {
