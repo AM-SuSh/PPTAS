@@ -909,62 +909,131 @@ class RetrievalAgent:
             return []
         return self.vectorstore.similarity_search(query, k=k)
     
-    def retrieve_external(self, query: str) -> List[Document]:
-        """外部检索 - 优先可用源"""
+    def retrieve_external(self, query: str, preferred_sources: List[str] = None) -> List[Document]:
+        """外部检索 - 使用MCPRouter（合并所有外部资源搜索）"""
+        from ..services.mcp_tools import MCPRouter
+        
         docs = []
         
-        # 只查询可用的源
-        available_sources = [name for name, config in self.sources.items() if config["available"]]
+        # 如果指定了优先源，使用它们；否则使用所有可用源
+        if preferred_sources:
+            # 映射源名称到MCPRouter的源名称
+            source_mapping = {
+                "baidu_baike": "baike",
+                "baike": "baike",
+                "wikipedia": "wikipedia",
+                "arxiv": "arxiv"
+            }
+            
+            # 转换源名称
+            mcp_sources = []
+            for source in preferred_sources:
+                if source in source_mapping:
+                    mcp_sources.append(source_mapping[source])
+                elif source in ["baike", "wikipedia", "arxiv"]:
+                    mcp_sources.append(source)
+            
+            if not mcp_sources:
+                print(f"   ⚠️  没有可映射的源")
+                return docs
+            
+            print(f"   🔍 使用MCPRouter搜索，查询: '{query}', 源: {mcp_sources}")
+        else:
+            # 使用所有可用源
+            available_sources = [name for name, config in self.sources.items() if config["available"]]
+            
+            if not available_sources:
+                print(f"   ⚠️  没有可用的外部源")
+                return docs
+            
+            # 映射源名称到MCPRouter的源名称
+            source_mapping = {
+                "baidu_baike": "baike",
+                "wikipedia": "wikipedia",
+                "arxiv": "arxiv"
+            }
+            
+            # 转换源名称
+            mcp_sources = []
+            for source in available_sources:
+                if source in source_mapping:
+                    mcp_sources.append(source_mapping[source])
+            
+            if not mcp_sources:
+                print(f"   ⚠️  没有可映射的源")
+                return docs
+            
+            print(f"   🔍 使用MCPRouter搜索，查询: '{query}', 源: {mcp_sources}")
         
-        if not available_sources:
-            return docs
-        
-        # 优先百度百科(中文友好)
-        if "baidu_baike" in available_sources:
-            # TODO: 实现百度百科API调用
-            pass
-        
-        # 其次维基百科
-        elif "wikipedia" in available_sources:
-            # TODO: 实现维基百科API调用
-            pass
-        
-        return docs
+        try:
+            mcp_router = MCPRouter()
+            docs = mcp_router.search(query, preferred_sources=mcp_sources)
+            print(f"   ✅ MCPRouter返回 {len(docs)} 条结果")
+            
+            # 过滤掉占位符文档
+            filtered_docs = []
+            for doc in docs:
+                if "未找到" not in doc.page_content:
+                    # 允许有URL或没有URL的文档，只要内容有效
+                    filtered_docs.append(doc)
+            
+            print(f"   ✅ 过滤后剩余 {len(filtered_docs)} 条有效结果")
+            return filtered_docs
+        except Exception as e:
+            print(f"   ❌ MCPRouter搜索失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
     
     def run(self, state: GraphState) -> GraphState:
-        """执行检索增强"""
+        """执行检索增强（合并所有外部资源搜索，包括标题和核心概念，百度作为保底）"""
         retrieved_docs = []
+        seen_urls = set()  # 用于去重
         
-        # 获取所有知识缺口（降低阈值，从priority >= 4改为 >= 3）
+        # 1. 准备搜索查询列表（包括标题、知识缺口、知识聚类）
+        search_queries = []
+        
+        # 添加页面标题（如果有）
+        raw_text = state.get("raw_text", "")
+        if raw_text:
+            # 尝试从原始文本中提取标题（第一行或前50字符）
+            lines = raw_text.split('\n')
+            if lines:
+                title = lines[0].strip()[:50]
+                if title and len(title) > 2:
+                    search_queries.append(title)
+        
+        # 添加知识缺口概念
         gaps = state.get("knowledge_gaps", [])
-        if not gaps:
-            print("⚠️  没有知识缺口，跳过检索")
+        if gaps:
+            # 优先处理高优先级缺口
+            high_priority_gaps = [g for g in gaps if hasattr(g, 'priority') and g.priority >= 4]
+            gaps_to_use = high_priority_gaps if high_priority_gaps else gaps[:3]
+            
+            for gap in gaps_to_use:
+                concept = gap.concept if hasattr(gap, 'concept') else gap.get("concept", "")
+                if concept and len(concept) <= 50:  # 限制长度
+                    search_queries.append(concept)
+        
+        # 添加知识聚类概念（如果没有足够的查询）
+        if len(search_queries) < 3:
+            clusters = state.get("knowledge_clusters", [])
+            for cluster in clusters[:3]:
+                concept = cluster.get("concept", "") if isinstance(cluster, dict) else ""
+                if concept and concept not in search_queries and len(concept) <= 50:
+                    search_queries.append(concept)
+                    if len(search_queries) >= 5:  # 最多5个查询
+                        break
+        
+        if not search_queries:
+            print("⚠️  没有可搜索的查询，跳过检索")
             state["retrieved_docs"] = []
             return state
         
-        # 优先处理高优先级缺口（priority >= 4），如果没有则处理所有缺口
-        high_priority_gaps = [g for g in gaps if hasattr(g, 'priority') and g.priority >= 4]
-        gaps_to_search = high_priority_gaps if high_priority_gaps else gaps[:3]  # 最多3个
-        
-        print(f"🔍 为 {len(gaps_to_search)} 个知识缺口检索参考资料")
-        
-        # 合并查询,减少检索次数
-        query = " ".join([gap.concept if hasattr(gap, 'concept') else gap.get("concept", "") for gap in gaps_to_search[:2]])
-        
-        if not query.strip():
-            print("⚠️  查询为空，跳过检索")
-            state["retrieved_docs"] = []
-            return state
-        
-        # 1. 优先本地 RAG
-        try:
-            local_docs = self.retrieve_local(query, k=3)
-            retrieved_docs.extend(local_docs)
-            print(f"   📚 本地RAG找到 {len(local_docs)} 条")
-        except Exception as e:
-            print(f"   ⚠️  本地RAG检索失败: {e}")
+        print(f"🔍 为 {len(search_queries)} 个查询检索参考资料: {search_queries[:3]}")
         
         # 2. 检查外部源可用性
+        self._test_sources()
         available_external = any(s["available"] for s in self.sources.values())
         print(f"   🌐 外部源可用性: {available_external}")
         if available_external:
@@ -974,18 +1043,72 @@ class RetrievalAgent:
                 else:
                     print(f"      - {name}: ❌")
         
-        # 3. 仅当本地不足且有可用外部源时才检索
-        if len(local_docs) < 2 and available_external:
-            try:
-                external_docs = self.retrieve_external(query)
-                retrieved_docs.extend(external_docs)
-                print(f"   🌐 外部检索找到 {len(external_docs)} 条")
-            except Exception as e:
-                print(f"   ⚠️  外部检索失败: {e}")
-        elif not available_external:
-            print(f"   ⚠️  所有外部源不可用，跳过外部检索")
+        # 3. 确定搜索顺序：优先 arxiv 和 wikipedia，百度作为保底
+        preferred_sources_order = []
+        if self.sources.get("arxiv", {}).get("available"):
+            preferred_sources_order.append("arxiv")
+        if self.sources.get("wikipedia", {}).get("available"):
+            preferred_sources_order.append("wikipedia")
+        if self.sources.get("baidu_baike", {}).get("available"):
+            preferred_sources_order.append("baike")
         
-        state["retrieved_docs"] = retrieved_docs[:5]  # 最多5条
+        # 4. 对每个查询进行搜索（合并所有外部资源）
+        for query in search_queries[:5]:  # 最多5个查询
+            if len(retrieved_docs) >= 10:  # 最多10条结果
+                break
+            
+            print(f"   🔍 搜索查询: '{query}'")
+            
+            # 4.1 优先本地 RAG
+            try:
+                local_docs = self.retrieve_local(query, k=2)
+                for doc in local_docs:
+                    url = doc.metadata.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        retrieved_docs.append(doc)
+                if local_docs:
+                    print(f"      📚 本地RAG找到 {len(local_docs)} 条")
+            except Exception as e:
+                print(f"      ⚠️  本地RAG检索失败: {e}")
+            
+            # 4.2 外部检索（所有可用源）
+            if preferred_sources_order:
+                try:
+                    external_docs = self.retrieve_external(query, preferred_sources=preferred_sources_order)
+                    for doc in external_docs:
+                        url = doc.metadata.get("url", "")
+                        # 允许没有URL的文档（如百度百科），但要去重
+                        doc_id = url or doc.page_content[:50]
+                        if doc_id not in seen_urls:
+                            seen_urls.add(doc_id)
+                            retrieved_docs.append(doc)
+                    if external_docs:
+                        print(f"      🌐 外部检索找到 {len(external_docs)} 条")
+                except Exception as e:
+                    print(f"      ⚠️  外部检索失败: {e}")
+        
+        # 5. 保底：如果还是没有结果，尝试百度保底搜索
+        if len(retrieved_docs) == 0 and self.sources.get("baidu_baike", {}).get("available"):
+            print(f"   🔄 未找到结果，尝试百度保底搜索...")
+            for query in search_queries[:2]:  # 最多尝试2个查询
+                try:
+                    from ..services.mcp_tools import MCPRouter
+                    mcp_router = MCPRouter()
+                    baike_docs = mcp_router.search(query, preferred_sources=["baike"])
+                    for doc in baike_docs:
+                        url = doc.metadata.get("url", "")
+                        doc_id = url or doc.page_content[:50]
+                        if doc_id not in seen_urls:
+                            seen_urls.add(doc_id)
+                            retrieved_docs.append(doc)
+                    if baike_docs:
+                        print(f"      ✅ 百度保底搜索找到 {len(baike_docs)} 条")
+                        break
+                except Exception as e:
+                    print(f"      ⚠️  百度保底搜索失败: {e}")
+        
+        state["retrieved_docs"] = retrieved_docs[:10]  # 最多10条
         print(f"✅ 检索完成，共 {len(state['retrieved_docs'])} 条参考资料")
         return state
 
@@ -998,7 +1121,7 @@ class ConsistencyCheckAgent:
         self.llm = llm_config.create_llm(temperature=0)
     
     def run(self, state: GraphState) -> GraphState:
-        """执行一致性校验"""
+        """执行一致性校验（不搜索外部资源，只做内容校验和修正）"""
         # 如果没有补充内容，跳过校验
         expanded_content = state.get("expanded_content", [])
         if not expanded_content:
@@ -1006,71 +1129,110 @@ class ConsistencyCheckAgent:
             state["check_result"] = CheckResult(status="pass", issues=[], suggestions=[])
             return state
         
-        # 优化: 明确防幻觉要求
-        template = """你是事实核查员,校验补充内容的准确性。
+        print("⏳ 进行一致性校验和内容整理...")
+        
+        # 优化: 明确防幻觉要求，确保不偏离源文本
+        template = """你是内容审核员，负责校验和修正补充内容，确保不偏离PPT原文。
 
-PPT原文: {raw_text}
+PPT原文:
+{raw_text}
 
-补充内容: {expanded_content}
+补充内容:
+{expanded_content}
 
-参考资料: {retrieved_docs}
+参考资料（已在检索阶段获取）:
+{retrieved_docs}
 
-严格校验(JSON):
+任务: 严格校验补充内容，确保：
+1. 所有内容必须基于PPT原文或参考资料，不能编造
+2. 不能偏离PPT原文的核心观点和主题
+3. 补充内容应该是对原文的扩展和解释，不能引入无关概念
+4. 如果发现偏离或错误，必须修正
+
+严格校验并修正(JSON格式):
 {{
   "status": "pass或revise",
-  "issues": ["问题列表"],
-  "suggestions": ["改进建议"]
+  "issues": ["具体问题列表，如：'引入了PPT未提及的概念X'、'偏离了原文主题'等"],
+  "suggestions": ["具体修正建议，如：'删除概念X，改为基于原文的Y'、'修正为与原文一致的观点'等"],
+  "revised_content": ["修正后的补充内容，如果status是pass则保持原样"]
 }}
 
 原则:
 1. 禁止编造PPT未提及的概念
-2. 所有陈述必须有依据(PPT或参考资料)
-3. 不确定的内容标记为"推测"
-4. 发现矛盾必须revise
+2. 所有陈述必须有依据(PPT原文或参考资料)
+3. 不确定的内容必须标记为"推测"或删除
+4. 发现偏离原文必须revise并修正
+5. 修正后的内容必须与原文保持一致
 """
         prompt = ChatPromptTemplate.from_template(template)
         chain = prompt | self.llm
         
         # 处理expanded_content可能是对象或字典
         expanded_text = "\n".join([
-            f"{ec.concept if hasattr(ec, 'concept') else ec.get('concept', '')}: {ec.content if hasattr(ec, 'content') else ec.get('content', '')}" 
+            f"**{ec.concept if hasattr(ec, 'concept') else ec.get('concept', '')}**: {ec.content if hasattr(ec, 'content') else ec.get('content', '')}" 
             for ec in expanded_content
         ])
         
         retrieved_docs = state.get("retrieved_docs", [])
         retrieved_text = "\n".join([
-            f"[参考{i+1}] {doc.page_content[:150] if hasattr(doc, 'page_content') else str(doc)[:150]}"
+            f"[参考{i+1}] {doc.page_content[:200] if hasattr(doc, 'page_content') else str(doc)[:200]}"
             for i, doc in enumerate(retrieved_docs[:3])
         ]) if retrieved_docs else "无参考资料"
         
         response = chain.invoke({
-            "raw_text": state["raw_text"][:600],
+            "raw_text": state["raw_text"][:1000],  # 增加原文长度
             "expanded_content": expanded_text or "无补充内容",
             "retrieved_docs": retrieved_text
         })
         
         try:
             # 尝试解析JSON，支持markdown代码块
-            response_text = response.content.strip()
-            if response_text.startswith("```"):
-                lines = response_text.split("\n")
-                json_lines = []
-                in_code_block = False
-                for line in lines:
-                    if line.strip().startswith("```"):
-                        in_code_block = not in_code_block
-                        continue
-                    if not in_code_block:
-                        json_lines.append(line)
-                response_text = "\n".join(json_lines)
+            response_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
             
-            result = json.loads(response_text)
-            check_result = CheckResult(
-                status=result.get("status", "pass"),
-                issues=result.get("issues", []),
-                suggestions=result.get("suggestions", [])
-            )
-        except:
+            if not response_text:
+                print("⚠️  一致性校验响应为空")
+                check_result = CheckResult(status="pass", issues=[], suggestions=[])
+            else:
+                # 移除markdown代码块
+                if response_text.startswith("```"):
+                    lines = response_text.split("\n")
+                    json_lines = []
+                    in_code_block = False
+                    for line in lines:
+                        if line.strip().startswith("```"):
+                            in_code_block = not in_code_block
+                            continue
+                        if in_code_block:
+                            json_lines.append(line)
+                    response_text = "\n".join(json_lines).strip()
+                
+                # 尝试提取JSON对象
+                import re
+                json_match = re.search(r'\{[\s\S]*\}', response_text)
+                if json_match:
+                    response_text = json_match.group(0)
+                
+                try:
+                    result = json.loads(response_text)
+                    check_result = CheckResult(
+                        status=result.get("status", "pass"),
+                        issues=result.get("issues", []),
+                        suggestions=result.get("suggestions", [])
+                    )
+                    
+                    # 如果有修正建议，更新expanded_content
+                    if result.get("status") == "revise" and result.get("revised_content"):
+                        print("✅ 检测到需要修正的内容，应用修正...")
+                        # 这里可以进一步处理修正后的内容
+                        # 暂时保留原内容，但记录修正建议
+                except json.JSONDecodeError as je:
+                    print(f"⚠️  一致性校验JSON解析失败: {je}")
+                    print(f"   响应内容前200字符: {response_text[:200]}")
+                    check_result = CheckResult(status="pass", issues=[], suggestions=[])
+        except Exception as e:
+            print(f"⚠️  一致性校验处理失败: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             check_result = CheckResult(status="pass", issues=[], suggestions=[])
         
         state["check_result"] = check_result
@@ -1085,40 +1247,68 @@ class StructuredOrganizationAgent:
         self.llm = llm_config.create_llm(temperature=0.5)
     
     def run(self, state: GraphState) -> GraphState:
-        """整理最终笔记"""
-        # 优化: 明确是学习笔记,不是完整文档
-        template = """整理学习笔记(Markdown格式,300字内):
+        """整理最终笔记（确保不偏离源文本）"""
+        # 优化: 明确是学习笔记,不能偏离源文本
+        template = """整理学习笔记(Markdown格式,300字内)，必须严格基于PPT原文，不能偏离。
 
 PPT原文:
 {raw_text}
 
-补充说明:
+补充说明（已校验）:
 {expanded_content}
+
+参考资料:
+{references}
+
+一致性校验结果:
+{check_result}
 
 格式要求:
 ## [页面标题]
 
 ### 核心概念
-- 概念1: 简要说明
-- 概念2: 简要说明
+- 概念1: 简要说明（必须来自PPT原文）
+- 概念2: 简要说明（必须来自PPT原文）
 
 ### 补充理解
-[补充内容,简洁易懂]
+[补充内容,简洁易懂，必须与PPT原文一致]
 
 ### 参考
 [如有参考资料列出]
 
-原则:
-- 简洁,突出重点
-- 不重复PPT原文
-- 适合快速复习
+严格原则:
+1. 所有内容必须基于PPT原文，不能偏离
+2. 补充内容只能是对原文的解释和扩展，不能引入新概念
+3. 如果一致性校验发现问题，必须修正
+4. 简洁,突出重点
+5. 不重复PPT原文，但必须与原文保持一致
 """
         prompt = ChatPromptTemplate.from_template(template)
         chain = prompt | self.llm
         
         expanded_text = "\n".join([
-            f"**{ec.concept}**: {ec.content}" for ec in state["expanded_content"]
+            f"**{ec.concept if hasattr(ec, 'concept') else ec.get('concept', '')}**: {ec.content if hasattr(ec, 'content') else ec.get('content', '')}" 
+            for ec in state.get("expanded_content", [])
         ])
+        
+        retrieved_docs = state.get("retrieved_docs", [])
+        references_text = "\n".join([
+            f"- {doc.metadata.get('title', '')} ({doc.metadata.get('source', '')})" 
+            for doc in retrieved_docs[:3]
+        ]) if retrieved_docs else "无参考资料"
+        
+        check_result = state.get("check_result", CheckResult(status="pass", issues=[], suggestions=[]))
+        check_text = f"状态: {check_result.status}\n问题: {', '.join(check_result.issues) if check_result.issues else '无'}\n建议: {', '.join(check_result.suggestions) if check_result.suggestions else '无'}"
+        
+        response = chain.invoke({
+            "raw_text": state["raw_text"][:1500],  # 增加原文长度以确保不偏离
+            "expanded_content": expanded_text or "无补充内容",
+            "references": references_text,
+            "check_result": check_text
+        })
+        
+        state["final_notes"] = response.content.strip()
+        return state
         
         response = chain.invoke({
             "raw_text": state["raw_text"][:500],

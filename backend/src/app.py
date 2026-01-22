@@ -809,16 +809,20 @@ async def analyze_page_stream(
             retrieval_msg = f'找到了 {retrieved_count} 条参考资料'
             yield f"data: {json.dumps({'stage': 'retrieval', 'data': [], 'message': retrieval_msg})}\n\n"
             
-            # 步骤6-7: 校验和整理
+            # 步骤6-7: 校验和整理（参考文献已在RetrievalAgent中搜索完成）
             print("⏳ 进行一致性校验和内容整理...")
             state = service.consistency_agent.run(state)
             state = service.organization_agent.run(state)
             
-            # 最终结果
-            references = service._search_references(
-                request.title,
-                [c["concept"] for c in knowledge_clusters[:3]]
-            )
+            # 从retrieved_docs中提取参考文献
+            references = []
+            for doc in state.get('retrieved_docs', [])[:5]:
+                references.append({
+                    "title": doc.metadata.get("title", ""),
+                    "url": doc.metadata.get("url", ""),
+                    "source": doc.metadata.get("source", "Unknown"),
+                    "snippet": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+                })
             
             print("✅ 分析完全完成")
             complete_data = {

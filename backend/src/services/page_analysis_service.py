@@ -227,23 +227,27 @@ class PageDeepAnalysisService:
         except Exception as e:
             print(f"外部检索失败: {e}")
         
-        # 步骤6: 一致性校验
+        # 步骤6: 一致性校验（不搜索外部资源，只做内容校验和修正）
         try:
             state = self.consistency_agent.run(state)
         except Exception as e:
             print(f"一致性校验失败: {e}")
         
-        # 步骤7: 最终内容组织
+        # 步骤7: 最终内容组织（确保不偏离源文本）
         try:
             state = self.organization_agent.run(state)
         except Exception as e:
             print(f"内容组织失败: {e}")
         
-        # 搜索参考文献
-        references = self._search_references(
-            title, 
-            [c["concept"] for c in state.get("knowledge_clusters", [])[:3]]
-        )
+        # 参考文献已在RetrievalAgent中搜索完成，直接使用
+        references = []
+        for doc in state.get("retrieved_docs", [])[:5]:
+            references.append({
+                "title": doc.metadata.get("title", ""),
+                "url": doc.metadata.get("url", ""),
+                "source": doc.metadata.get("source", "Unknown"),
+                "snippet": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+            })
         
         # 转换 expanded_content 为字典列表
         expanded_content_list = []
@@ -278,66 +282,3 @@ class PageDeepAnalysisService:
             raw_points=raw_points or []
         )
     
-    
-    def _search_references(self, title: str, concepts: List[str], max_refs: int = 5) -> List[Dict[str, str]]:
-        """搜索参考文献 - 智能缓存和早期退出"""
-        references = []
-        
-        # 检查外部源是否可用（只检查一次）
-        if not hasattr(self, '_sources_checked'):
-            self._sources_checked = True
-            # 检查常用源的可用性
-            available_sources = []
-            try:
-                from urllib.parse import urlparse
-                import requests
-                
-                sources_to_check = {
-                    "arxiv": "https://arxiv.org",
-                    "wikipedia": "https://zh.wikipedia.org"
-                }
-                
-                for source_name, url in sources_to_check.items():
-                    try:
-                        response = requests.head(url, timeout=2, allow_redirects=True)
-                        if response.status_code < 400:
-                            available_sources.append(source_name)
-                    except:
-                        pass
-                
-                self._available_sources = available_sources
-            except:
-                self._available_sources = []
-        
-        # 如果所有源都不可用，直接返回空列表（不要浪费时间）
-        if not self._available_sources:
-            print("⚠️ 所有外部源不可用，跳过参考文献检索")
-            return []
-        
-        # 组合搜索查询
-        search_queries = [title] + concepts[:3]
-        
-        for query in search_queries:
-            if len(references) >= max_refs:
-                break
-            
-            try:
-                # 使用 MCP 路由器搜索（仅使用可用的源）
-                docs = self.mcp_router.search(query, preferred_sources=self._available_sources)
-                
-                for doc in docs[:1]:  # 每个查询最多 1 个结果
-                    # 过滤掉占位符文档
-                    if "未找到" not in doc.page_content:
-                        ref = {
-                            "title": doc.metadata.get("title", query),
-                            "url": doc.metadata.get("url", ""),
-                            "source": doc.metadata.get("source", "Unknown"),
-                            "snippet": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
-                        }
-                        if ref["url"]:  # 只添加有有效 URL 的结果
-                            references.append(ref)
-            except Exception as e:
-                print(f"❌ 查询 '{query}' 失败: {e}")
-                continue
-        
-        return references
