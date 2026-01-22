@@ -43,7 +43,6 @@ class PersistenceService:
                 )
                 """
             )
-            # 迁移：如果表已存在但没有 global_analysis_json 字段，则添加
             try:
                 cursor = conn.execute("PRAGMA table_info(documents)")
                 columns = [row[1] for row in cursor.fetchall()]
@@ -127,7 +126,6 @@ class PersistenceService:
             with self._connect() as conn:
                 existing = conn.execute("SELECT doc_id FROM documents WHERE file_hash=?", (file_hash,)).fetchone()
                 if existing:
-                    # keep existing doc_id stable for this hash
                     if global_analysis_json:
                         conn.execute(
                             """

@@ -1,4 +1,4 @@
-"""PPT 扩展系统服务 - 集成 LangGraph 工作流"""
+"""PPT 扩展系统服务"""
 
 from typing import List, Dict, Any
 import json
@@ -60,11 +60,11 @@ class PPTExpansionService:
         workflow.add_edge("knowledge_clustering", "structure_understanding")
         workflow.add_edge("structure_understanding", "gap_identification")
         workflow.add_edge("gap_identification", "knowledge_expansion")
-        workflow.add_edge("gap_identification", "retrieval")  # 并行
+        workflow.add_edge("gap_identification", "retrieval")  
         workflow.add_edge("knowledge_expansion", "consistency_check")
         workflow.add_edge("retrieval", "consistency_check")
         
-        # 条件边：校验通过 -> 整理，校验失败 -> 重新扩展
+        # 条件边
         workflow.add_conditional_edges(
             "consistency_check",
             self._should_revise,
@@ -132,8 +132,6 @@ class PPTExpansionService:
                 "streaming_chunks": []
             }
             
-            # 跳过全局结构和聚类，直接开始理解
-            # 从 structure_understanding 开始
             result = self._run_from_structure(initial_state)
             
             results.append({
@@ -149,31 +147,18 @@ class PPTExpansionService:
     
     def _run_from_structure(self, initial_state: GraphState) -> GraphState:
         """从结构理解开始的部分流程"""
-        # 为简化起见，这里创建一个简化的工作流
         state = initial_state
-        
-        # 执行结构理解
         state = self.structure_agent.run(state)
-        
-        # 执行缺口识别
         state = self.gap_agent.run(state)
-        
-        # 执行知识扩展
         state = self.expansion_agent.run(state)
-        
-        # 执行检索
         state = self.retrieval_agent.run(state)
-        
-        # 执行一致性校验
         state = self.check_agent.run(state)
         
-        # 如果需要修订
         if state["check_result"].status == "revise" and state.get("revision_count", 0) < state.get("max_revisions", 2):
             state["revision_count"] = state.get("revision_count", 0) + 1
             state = self.expansion_agent.run(state)
             state = self.check_agent.run(state)
-        
-        # 执行整理
+
         state = self.organization_agent.run(state)
         
         return state

@@ -80,21 +80,21 @@ class ChatResponse(BaseModel):
 
 class PageAnalysisRequest(BaseModel):
     """页面分析请求"""
-    doc_id: Optional[str] = None  # 关联文档ID，用于缓存/持久化
+    doc_id: Optional[str] = None  
     page_id: int
     title: str
     content: str
     raw_points: Optional[list] = None
-    key_concepts: Optional[list] = None  # 关键概念列表
-    analysis: Optional[str] = None  # 深度分析内容
-    force: Optional[bool] = False  # 强制重新分析，忽略缓存
+    key_concepts: Optional[list] = None 
+    analysis: Optional[str] = None  
+    force: Optional[bool] = False 
 
 
 class ReferenceSearchRequest(BaseModel):
     """参考文献搜索请求"""
     query: str
     max_results: int = 10
-    search_type: Optional[str] = None  # "academic" | "general" | None
+    search_type: Optional[str] = None  
 
 
 class SemanticSearchRequest(BaseModel):
@@ -109,12 +109,12 @@ class SemanticSearchRequest(BaseModel):
 class ExportRequest(BaseModel):
     """导出请求"""
     doc_id: str
-    include_global: bool = True  # 是否包含全局分析
-    include_pages: bool = True  # 是否包含页面分析
-    page_range: Optional[List[int]] = None  # 指定页面范围（None表示全部）
-    export_type: str = "full"  # "full" | "summary"
+    include_global: bool = True 
+    include_pages: bool = True  
+    page_range: Optional[List[int]] = None  
+    export_type: str = "full" 
     file_name: Optional[str] = None
-    file_type: Optional[str] = None  # "pdf" 或 "pptx"
+    file_type: Optional[str] = None  
     min_score: float = 0.0
 
 
@@ -164,7 +164,7 @@ def get_persistence_service() -> PersistenceService:
     """获取 SQLite 持久化服务单例"""
     global _persistence_service
     if _persistence_service is None:
-        backend_root = os.path.join(os.path.dirname(__file__), "..")  # backend/src -> backend/
+        backend_root = os.path.join(os.path.dirname(__file__), "..")  
         db_path = os.path.abspath(os.path.join(backend_root, "pptas_cache.sqlite3"))
         _persistence_service = PersistenceService(db_path=db_path)
         print(f"🗄️  SQLite 持久化启用: {db_path}")
@@ -178,7 +178,7 @@ def get_persistence_service() -> PersistenceService:
     """获取 SQLite 持久化服务单例"""
     global _persistence_service
     if _persistence_service is None:
-        backend_root = os.path.join(os.path.dirname(__file__), "..")  # backend/src -> backend/
+        backend_root = os.path.join(os.path.dirname(__file__), "..") 
         db_path = os.path.abspath(os.path.join(backend_root, "pptas_cache.sqlite3"))
         _persistence_service = PersistenceService(db_path=db_path)
         print(f"🗄️  SQLite 持久化启用: {db_path}")
@@ -345,7 +345,7 @@ def get_vector_store_service():
     )
     # 优先使用 vector_store 配置，如果没有则使用 knowledge_base 路径
     vector_db_path = config.get("vector_store", {}).get("path") or config.get("knowledge_base", {}).get("path", "./ppt_vector_db")
-    # 从配置读取embedding模型，如果没有则使用None（让服务自己决定）
+    # 从配置读取embedding模型，如果没有则使用None
     embedding_model = config.get("vector_store", {}).get("embedding_model")
     return VectorStoreService(llm_config, vector_db_path, embedding_model=embedding_model)
 
@@ -382,8 +382,6 @@ async def expand_ppt(
         if existing_doc:
             print(f"♻️  命中文档缓存: {filename} hash={file_hash[:12]} doc_id={existing_doc['doc_id']}")
             
-            # 即使命中缓存，也要检查向量数据库中是否存在
-            # 如果不存在，需要存储
             try:
                 slides = existing_doc.get("slides", [])
                 file_type = ext[1:] if ext.startswith('.') else ext
@@ -415,7 +413,7 @@ async def expand_ppt(
         # 存储到向量数据库
         print(f"\n🔄 准备存储到向量数据库: {filename}")
         try:
-            file_type = ext[1:] if ext.startswith('.') else ext  # 移除点号
+            file_type = ext[1:] if ext.startswith('.') else ext  
             store_result = vector_store.store_document_slides(
                 file_name=filename,
                 file_type=file_type,
@@ -537,7 +535,7 @@ async def get_all_page_analysis(
 class GlobalAnalysisRequest(BaseModel):
     """全局分析请求"""
     doc_id: str
-    force: Optional[bool] = False  # 强制重新分析，忽略缓存
+    force: Optional[bool] = False  
 
 
 @app.post("/api/v1/analyze-document-global")
@@ -561,7 +559,7 @@ async def analyze_document_global(
         if not doc:
             raise HTTPException(status_code=404, detail="未找到文档")
         
-        # 检查是否已有全局分析（除非强制重新分析）
+        # 检查是否已有全局分析
         if not request.force and doc.get("global_analysis"):
             print(f"♻️  文档 {request.doc_id} 已有全局分析，直接返回")
             return {
@@ -710,7 +708,7 @@ async def analyze_page_stream(
             if request.force:
                 yield f"data: {json.dumps({'stage': 'info', 'data': {}, 'message': '🔄 强制重新分析，忽略缓存...'})}\n\n"
 
-            # 获取全局分析结果（如果有）
+            # 获取全局分析结果
             global_analysis = None
             if request.doc_id:
                 doc = persistence.get_document_by_id(request.doc_id)
@@ -720,11 +718,10 @@ async def analyze_page_stream(
                 else:
                     print(f"⚠️  文档 {request.doc_id} 没有全局分析结果，将仅基于当前页面分析")
             
-            # 步骤1: 知识聚类（基于全局上下文）
+            # 步骤1: 知识聚类
             print("⏳ 开始知识聚类...")
             yield f"data: {json.dumps({'stage': 'clustering', 'data': [], 'message': '正在分析难点概念...'})}\n\n"
             
-            # 如果有全局分析，将全局知识点单元传递给聚类agent
             knowledge_clusters = service.clustering_agent.run(
                 request.content,
                 global_context=global_analysis
@@ -940,7 +937,7 @@ async def set_tutor_context(
         # 确保 page_id 是整数
         page_id = int(request.page_id)
         
-        # 检查上下文是否已存在（批量设置后应该已存在）
+        # 检查上下文是否已存在
         if page_id in service.page_context:
             print(f"✅ 上下文已存在（批量设置已完成），跳过重复设置: page_id={page_id}")
             greeting = service.get_assistant_greeting(page_id)
@@ -954,23 +951,22 @@ async def set_tutor_context(
         
         print(f"🔧 设置上下文: page_id={page_id}, title={request.title}")
         
-        # 提取知识集群信息（如果已分析过）
+        # 提取知识集群信息
         knowledge_clusters = request.key_concepts or []
         if isinstance(knowledge_clusters, list) and len(knowledge_clusters) > 0:
-            # 如果 key_concepts 是字符串列表，转换为字典列表
             if isinstance(knowledge_clusters[0], str):
                 knowledge_clusters = [
                     {"concept": c, "difficulty_level": 2} 
                     for c in knowledge_clusters
                 ]
         
-        # 设置页面上下文 - 使用新的参数格式
+        # 设置页面上下文 
         service.set_page_context(
             page_id=page_id,
             title=request.title,
             content=content_text,
             knowledge_clusters=knowledge_clusters or [],
-            understanding_notes=request.analysis or "",  # 使用 analysis 字段作为理解笔记
+            understanding_notes=request.analysis or "",  
             knowledge_gaps=getattr(request, 'knowledge_gaps', []),
             expanded_content=getattr(request, 'expanded_content', [])
         )
@@ -1212,7 +1208,7 @@ async def search_by_concepts(
 class ExternalSearchRequest(BaseModel):
     """外部搜索请求"""
     query: str
-    sources: Optional[List[str]] = None  # ["wikipedia", "arxiv", "web"]
+    sources: Optional[List[str]] = None  
     max_results: int = 10
 
 
@@ -1309,14 +1305,14 @@ async def complete_health_check():
         model=config["llm"]["model"]
     )
     
-    # 后端检查（极快速）
+    # 后端检查
     backend_status = {
         "status": "ok",
         "version": "0.2.0",
         "timestamp": datetime.now().isoformat()
     }
     
-    # LLM 检查（快速预检查，不调用 LLM API）
+    # LLM 检查
     llm_status = {
         "status": "unknown",
         "message": "检查中...",
@@ -1566,19 +1562,15 @@ async def check_llm_connection():
     
     # 第二步：快速网络连接检查（不实际调用 LLM）
     try:
-        # 使用超短超时时间（2秒）做快速连接预检
         timeout = aiohttp.ClientTimeout(total=2, connect=1)
         
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # 只测试网络连通性，不调用实际 API
             base_url = llm_config.base_url or "https://api.openai.com/v1"
             
             # 尝试连接到 base_url
             try:
                 async with session.head(base_url, ssl=False, allow_redirects=True) as resp:
-                    # 如果能连接（即使是 401/403 也表示网络通），说明基础连接正常
                     if resp.status in [200, 401, 403, 404]:
-                        # 网络连接正常，可能的状态（具体的 API 验证会在实际调用时进行）
                         return {
                             "status": "ok",
                             "message": "LLM 服务网络连接正常（预检查）",
@@ -1754,7 +1746,6 @@ async def export_analysis(
             file_name = f"{doc_info['file_name']}_AI分析补充内容.md"
         
         # 5. 返回文件下载响应
-        # 使用URL编码确保文件名兼容性
         from urllib.parse import quote
         encoded_filename = quote(file_name)
         

@@ -1,4 +1,3 @@
-# src/config.py
 """
 配置文件管理
 适配 config.json 结构
@@ -97,7 +96,7 @@ class ConfigManager:
         """获取 LLM 配置"""
         llm_data = self._config_data.get('llm', {})
         
-        # 设置环境变量（用于其他可能直接读取环境变量的模块）
+        # 设置环境变量
         if 'api_key' in llm_data:
             os.environ['OPENAI_API_KEY'] = llm_data['api_key']
         if 'base_url' in llm_data:

@@ -53,7 +53,7 @@ class ReferenceSearchService:
         """
         references = []
         
-        # 1. 尝试使用外部搜索（如果启用且可用）
+        # 1. 外部搜索
         if use_external and self.external_search.is_available():
             try:
                 # 使用 await 调用异步搜索
@@ -82,7 +82,7 @@ class ReferenceSearchService:
             except Exception as e:
                 print(f"⚠️ 外部搜索失败，回退到本地搜索: {e}")
         
-        # 2. 如果外部搜索结果不足，使用 MCP 路由器补充
+        # 2. 使用 MCP 路由器补充
         if len(references) < max_results:
             try:
                 remaining = max_results - len(references)
@@ -130,13 +130,11 @@ class ReferenceSearchService:
         Returns:
             ReferenceSearchResult: 搜索结果
         """
-        # 使用 asyncio.run 在同步上下文中运行异步代码
         try:
             return asyncio.run(self.search_references_async(
                 query, max_results, preferred_sources, use_external
             ))
         except RuntimeError as e:
-            # 如果已经在事件循环中，回退到仅本地搜索
             if "running" in str(e).lower():
                 print(f"⚠️ 检测到运行中的事件循环，仅使用本地搜索")
                 return self._search_local_only(query, max_results, preferred_sources)
@@ -191,8 +189,7 @@ class ReferenceSearchService:
             Dict[concept -> ReferenceSearchResult]: 按概念组织的搜索结果
         """
         results = {}
-        
-        # 如果使用外部搜索且可用，使用批量异步搜索
+
         if use_external and self.external_search.is_available():
             try:
                 external_results = await self.external_search.search_by_concepts(

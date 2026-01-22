@@ -1,6 +1,5 @@
 """
-向量存储服务 - 重新设计版本
-目标：简单、高效、准确的语义搜索
+向量存储服务 
 """
 
 import os
@@ -12,7 +11,6 @@ from collections import defaultdict
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 
-# 优先使用新的 langchain-chroma
 try:
     from langchain_chroma import Chroma
 except ImportError:
@@ -51,7 +49,6 @@ class VectorStoreService:
             "base_url": llm_config.base_url
         }
         
-        # 如果指定了embedding模型，尝试使用它
         if embedding_model:
             try:
                 embedding_kwargs["model"] = embedding_model
@@ -60,20 +57,16 @@ class VectorStoreService:
             except Exception as e:
                 print(f"⚠️  使用配置的Embedding模型失败 ({embedding_model}): {e}")
                 print(f"💡 尝试使用默认模型...")
-                # 移除model参数，使用默认模型
                 embedding_kwargs.pop("model", None)
                 self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
         else:
-            # 没有指定模型，使用默认
             try:
-                # 尝试使用常用的中文embedding模型
                 embedding_kwargs["model"] = "BAAI/bge-large-zh-v1.5"
                 self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
                 print(f"✅ 使用默认Embedding模型: BAAI/bge-large-zh-v1.5")
             except Exception as e:
                 print(f"⚠️  默认Embedding模型不可用: {e}")
                 print(f"💡 尝试使用API默认模型...")
-                # 移除model参数，让API使用默认模型
                 embedding_kwargs.pop("model", None)
                 self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
                 print(f"✅ 使用API默认Embedding模型")
@@ -90,7 +83,6 @@ class VectorStoreService:
         try:
             os.makedirs(self.vector_db_path, exist_ok=True)
             
-            # 尝试加载现有数据库
             if os.path.exists(self.vector_db_path) and os.listdir(self.vector_db_path):
                 try:
                     self.vectorstore = Chroma(
@@ -101,7 +93,6 @@ class VectorStoreService:
                     return
                 except Exception as e:
                     print(f"⚠️  加载现有数据库失败: {e}")
-                    # 删除旧数据库，重新创建
                     import shutil
                     shutil.rmtree(self.vector_db_path)
                     os.makedirs(self.vector_db_path, exist_ok=True)
@@ -124,12 +115,12 @@ class VectorStoreService:
         """
         text_parts = []
         
-        # 1. 标题（最重要）
+        # 1. 标题
         title = slide.get("title", "").strip()
         if title:
             text_parts.append(title)
         
-        # 2. 内容点（保持原始顺序和结构）
+        # 2. 内容点
         raw_points = slide.get("raw_points", [])
         for point in raw_points:
             if isinstance(point, dict):
@@ -160,13 +151,11 @@ class VectorStoreService:
         Returns:
             分割后的文本块列表
         """
-        # 保守估计：400 tokens ≈ 1200 字符
         max_chars = max_tokens * 3
         
         if len(text) <= max_chars:
             return [text]
         
-        # 如果文本太长，按段落分割
         chunks = []
         lines = text.split('\n')
         current_chunk = []
@@ -187,8 +176,7 @@ class VectorStoreService:
         # 添加最后一个chunk
         if current_chunk:
             chunks.append('\n'.join(current_chunk))
-        
-        # 如果还有超长的chunk（单行超长），强制截断
+
         final_chunks = []
         for chunk in chunks:
             if len(chunk) > max_chars:
@@ -218,8 +206,7 @@ class VectorStoreService:
         """
         if not self.vectorstore:
             raise Exception("向量数据库未初始化")
-        
-        # 如果需要覆盖，先删除旧数据
+   
         if overwrite:
             self.delete_file_slides(file_name)
         
@@ -276,9 +263,7 @@ class VectorStoreService:
         if documents:
             print(f"  📦 准备存储 {len(documents)} 个文档到向量数据库")
             try:
-                # 分批存储，避免API限制
-                # 由于API限制每个文档<512 tokens，需要更小的批次
-                batch_size = 5  # 减小批次大小
+                batch_size = 5  
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i:i + batch_size]
                     batch_ids = ids[i:i + batch_size]
@@ -293,7 +278,6 @@ class VectorStoreService:
                         stored_count += len(batch_docs)
                         print(f"  ✅ 已存储 {stored_count}/{len(documents)} 页")
                     except Exception as batch_err:
-                        # 如果批次失败，尝试单个存储
                         print(f"  ⚠️ 批次存储失败，尝试逐个存储...")
                         for doc, doc_id in zip(batch_docs, batch_ids):
                             try:
@@ -310,13 +294,13 @@ class VectorStoreService:
                                 else:
                                     print(f"    ✗ 页面 {doc.metadata.get('page_num')} 存储失败: {single_err}")
                 
-                # 持久化（新版 Chroma 可能不需要手动 persist）
+                # 持久化
                 try:
                     if hasattr(self.vectorstore, 'persist'):
                         self.vectorstore.persist()
                         print(f"  💾 数据已持久化")
                 except Exception as persist_err:
-                    pass  # 新版本自动持久化，忽略此错误
+                    pass  
                 
                 print(f"✅ 存储完成: {file_name}，共 {stored_count} 页")
                 
@@ -332,7 +316,7 @@ class VectorStoreService:
             "file_name": file_name,
             "file_type": file_type,
             "total_slides": len(slides),
-            "total_chunks": stored_count,  # 保持和旧版一致的字段名
+            "total_chunks": stored_count, 
             "stored_at": datetime.now().isoformat()
         }
     
@@ -372,7 +356,7 @@ class VectorStoreService:
             where["file_type"] = file_type
         
         try:
-            # 搜索更多结果（top_k * 2），然后去重
+            # 搜索更多结果去重
             search_k = max(top_k * 2, 20)
             
             # 执行向量搜索
@@ -390,29 +374,22 @@ class VectorStoreService:
             
             print(f"   原始结果数: {len(results)}")
             
-            # 调试：显示前5个结果的文件名
             if results:
                 print(f"   前5个结果的文件名:")
                 for i, (doc, dist) in enumerate(results[:5]):
                     print(f"     {i+1}. {doc.metadata.get('file_name', 'unknown')} - 页 {doc.metadata.get('page_num', '?')} (距离: {dist:.3f})")
             
-            # 处理结果并去重
-            # 策略：同一页面的多个chunk，只保留相似度最高的那个
-            # 同时计算关键词匹配度，提升包含检索词的结果排名
             page_best_results = {}  # {(file_name, page_num): best_result}
             filtered_count = 0
             
-            # 提取查询关键词（用于关键词匹配加分）
+            # 提取查询关键词
             query_lower = query.lower().strip()
             query_keywords = set(query_lower.split())
-            # 对于中文，也尝试将整个查询作为完整关键词
             if len(query_lower) >= 2:
-                query_keywords.add(query_lower)  # 添加完整查询作为关键词
+                query_keywords.add(query_lower)  
             
             for doc, distance in results:
-                # 计算相似度（ChromaDB使用余弦距离）
-                # 余弦距离: [0, 2]，0表示完全相同
-                # 转换为相似度: similarity = 1 - (distance / 2)
+                # 计算相似度
                 similarity = 1.0 - (distance / 2.0)
                 similarity = max(0.0, min(1.0, similarity))
                 
@@ -421,17 +398,16 @@ class VectorStoreService:
                     filtered_count += 1
                     continue
                 
-                # 计算关键词匹配度（大幅提升包含检索词的结果）
+                # 计算关键词匹配度
                 content_lower = doc.page_content.lower()
                 keyword_match_score = 0.0
                 matched_keywords = 0
                 full_query_matched = False
                 
-                # 首先检查完整查询是否匹配（最重要）
+                # 首先检查完整查询是否匹配
                 if query_lower in content_lower:
                     full_query_matched = True
                     count = content_lower.count(query_lower)
-                    # 完整匹配给予大幅加分：出现1次+0.4，每多出现1次+0.1（最多+0.6）
                     keyword_match_score += min(0.6, 0.4 + (count - 1) * 0.1)
                     matched_keywords += 1
                     print(f"   ✅ 完整匹配查询 '{query_lower}' 在 {doc.metadata.get('file_name', 'unknown')} 页{doc.metadata.get('page_num', '?')} (出现{count}次)")
@@ -439,19 +415,18 @@ class VectorStoreService:
                 # 然后检查单个关键词匹配
                 for keyword in query_keywords:
                     if keyword == query_lower:
-                        continue  # 已经处理过完整查询
-                    if len(keyword) >= 2:  # 只考虑长度>=2的关键词
+                        continue  
+                    if len(keyword) >= 2:  
                         count = content_lower.count(keyword)
                         if count > 0:
                             matched_keywords += 1
-                            # 单个关键词匹配：出现1次+0.2，每多出现1次+0.05（最多+0.3）
                             keyword_match_score += min(0.3, 0.2 + (count - 1) * 0.05)
                 
                 # 如果匹配了多个关键词，额外加分
                 if matched_keywords >= 2:
                     keyword_match_score += 0.15
                 
-                # 如果没有匹配任何关键词，适当降分（避免不相关结果排名过高）
+                # 如果没有匹配任何关键词，适当降分
                 if matched_keywords == 0:
                     keyword_match_score = -0.1  # 降分0.1
                     print(f"   ⚠️ 无关键词匹配: {doc.metadata.get('file_name', 'unknown')} 页{doc.metadata.get('page_num', '?')} (语义分={similarity:.3f})")
@@ -465,17 +440,16 @@ class VectorStoreService:
                     metadata.get("page_num", 0)
                 )
                 
-                # 去重：同一页面的多个chunk，只保留综合相似度最高的
+                # 去重
                 if page_key in page_best_results:
                     if final_similarity > page_best_results[page_key]["score"]:
-                        # 找到更相关的chunk，替换
                         page_best_results[page_key] = {
                             "content": doc.page_content,
                             "metadata": metadata,
                             "score": final_similarity,
                             "distance": distance,
-                            "semantic_score": similarity,  # 保留原始语义相似度
-                            "keyword_boost": keyword_match_score  # 关键词加分
+                            "semantic_score": similarity,  
+                            "keyword_boost": keyword_match_score  
                         }
                 else:
                     page_best_results[page_key] = {
@@ -490,11 +464,10 @@ class VectorStoreService:
             # 转换为列表
             formatted_results = list(page_best_results.values())
             
-            # 优化排序：如果指定了file_name，给当前文件的结果加权
+            # 优化排序
             if file_name:
                 for result in formatted_results:
                     if result["metadata"].get("file_name") == file_name:
-                        # 当前文件的结果，分数加权 +0.2
                         result["score"] = min(1.0, result["score"] + 0.2)
                         result["boosted"] = True
             
@@ -507,13 +480,11 @@ class VectorStoreService:
             if formatted_results:
                 print(f"   最高分: {formatted_results[0]['score']:.3f} (语义: {formatted_results[0].get('semantic_score', 0):.3f}, 关键词加分: {formatted_results[0].get('keyword_boost', 0):.3f})")
                 print(f"   最低分: {formatted_results[-1]['score']:.3f}")
-                # 显示前3个结果的详细信息
                 print(f"   前3个结果详情:")
                 for i, r in enumerate(formatted_results[:3]):
                     print(f"     {i+1}. {r['metadata'].get('file_name', 'unknown')} 页{r['metadata'].get('page_num', '?')}: "
                           f"总分={r['score']:.3f} (语义={r.get('semantic_score', 0):.3f}, "
                           f"关键词={r.get('keyword_boost', 0):.3f})")
-                # 显示结果的文件分布
                 file_distribution = {}
                 for r in formatted_results:
                     fn = r['metadata'].get('file_name', 'unknown')
@@ -524,18 +495,15 @@ class VectorStoreService:
                     print(f"     - {fn}: {count} 个结果{is_target}")
             else:
                 print(f"   ⚠️ 没有找到满足条件的结果！")
-                # 如果没有结果，降低min_score重试
                 if min_score > 0:
                     print(f"   💡 提示: 当前min_score={min_score}可能过高，尝试降低或设为0")
             
-            # 返回前 top_k 个结果
             return formatted_results[:top_k]
             
         except Exception as e:
             error_msg = str(e)
             print(f"⚠️  向量搜索失败: {error_msg}")
-            
-            # 检查是否是Embedding API错误
+
             if "500" in error_msg or "InternalServerError" in error_msg or "50500" in error_msg:
                 print(f"❌ Embedding API 服务错误 (500)")
                 print(f"   可能原因:")
@@ -543,8 +511,7 @@ class VectorStoreService:
                 print(f"   2. API服务暂时不可用")
                 print(f"   3. API Key权限不足")
                 print(f"💡 自动降级到关键词搜索...")
-                
-                # 降级到关键词搜索
+
                 try:
                     keyword_results = self.search_by_keyword(
                         query=query,
@@ -560,7 +527,6 @@ class VectorStoreService:
                 except Exception as e2:
                     print(f"❌ 关键词搜索也失败: {e2}")
             else:
-                # 其他类型的错误
                 print(f"❌ 向量搜索遇到未知错误: {error_msg}")
                 print(f"💡 尝试降级到关键词搜索...")
                 try:
@@ -614,10 +580,8 @@ class VectorStoreService:
                 
                 # 计算关键词匹配度
                 if query_lower in doc_text_lower:
-                    # 计算匹配次数
                     match_count = doc_text_lower.count(query_lower)
-                    # 计算相似度（基于匹配次数和文档长度）
-                    score = min(match_count / 10, 1.0)  # 最多1.0
+                    score = min(match_count / 10, 1.0)  
                     
                     results.append({
                         "content": doc_text,
@@ -626,8 +590,7 @@ class VectorStoreService:
                         "match_count": match_count,
                         "method": "keyword"
                     })
-            
-            # 按匹配次数排序
+                    
             results.sort(key=lambda x: (x["score"], x.get("match_count", 0)), reverse=True)
             
             return results[:top_k]

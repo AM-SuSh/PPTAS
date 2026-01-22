@@ -23,7 +23,7 @@ from ..agents.models import CheckResult
 
 
 class PageKnowledgeClusterer:
-    """单页面知识聚类 - 针对学生理解难度分析（基于全局上下文）"""
+    """单页面知识聚类"""
     
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0.3)
@@ -36,7 +36,6 @@ class PageKnowledgeClusterer:
             global_context: 全局分析结果，包含主题、知识点框架等
         """
         if global_context:
-            # 有全局上下文时，使用增强的prompt
             template = """作为学习专家,基于整个文档的全局分析结果,分析当前页面中学生可能有理解难度的概念。
 
 文档全局信息:
@@ -66,10 +65,10 @@ class PageKnowledgeClusterer:
 
 只返回JSON数组。
 """
-            # 格式化全局知识点单元
+            # 格式化
             knowledge_units_str = ""
             if global_context.get("knowledge_units"):
-                for unit in global_context["knowledge_units"][:10]:  # 最多显示10个
+                for unit in global_context["knowledge_units"][:10]:  
                     pages_str = ",".join(map(str, unit.get("pages", [])))
                     concepts_str = ",".join(unit.get("core_concepts", []))
                     knowledge_units_str += f"- {unit.get('title', '')} (页码: {pages_str}, 核心概念: {concepts_str})\n"
@@ -84,7 +83,6 @@ class PageKnowledgeClusterer:
                 "content": raw_text[:1500]
             })
         else:
-            # 没有全局上下文时，使用原始prompt
             template = """作为学习专家,分析以下内容中学生可能有理解难度的概念。
 
 内容:
@@ -119,33 +117,28 @@ class DeepAnalysisResult(BaseModel):
     page_id: int = Field(description="页面 ID")
     title: str = Field(description="页面标题")
     
-    # 原始内容
     raw_content: str = Field(description="原始文本内容")
     
-    # 结构化分析
     page_structure: Dict[str, Any] = Field(description="页面结构化分析结果")
     knowledge_clusters: List[Dict[str, Any]] = Field(description="知识聚类分析")
     
-    # 学生理解支持
     understanding_notes: str = Field(description="结构化学习笔记 (Markdown)")
     knowledge_gaps: List[Dict[str, Any]] = Field(description="识别的知识缺口")
     expanded_content: List[Dict[str, str]] = Field(description="补充说明内容")
     
-    # 参考文献
     references: List[Dict[str, str]] = Field(default_factory=list, description="参考文献列表")
     
-    # 原始数据结构
     raw_points: List[Dict[str, Any]] = Field(default_factory=list, description="原始要点")
 
 
 class PageDeepAnalysisService:
-    """单页深度分析服务 - 使用优化的 Agent 流程"""
+    """单页深度分析服务"""
     
     def __init__(self, llm_config):
         self.llm_config = llm_config
         self.mcp_router = MCPRouter()
         
-        # 初始化优化的 Agent
+        # 初始化
         self.structure_agent = GlobalStructureAgent(llm_config)
         self.clustering_agent = PageKnowledgeClusterer(llm_config)
         self.understanding_agent = StructureUnderstandingAgent(llm_config)
@@ -195,7 +188,7 @@ class PageDeepAnalysisService:
             "streaming_chunks": []
         }
         
-        # 步骤1: 知识聚类和难度分析（单页版本）
+        # 步骤1: 知识聚类和难度分析
         try:
             knowledge_clusters = self.clustering_agent.run(content)
             state["knowledge_clusters"] = knowledge_clusters
@@ -227,19 +220,18 @@ class PageDeepAnalysisService:
         except Exception as e:
             print(f"外部检索失败: {e}")
         
-        # 步骤6: 一致性校验（不搜索外部资源，只做内容校验和修正）
+        # 步骤6: 一致性校验
         try:
             state = self.consistency_agent.run(state)
         except Exception as e:
             print(f"一致性校验失败: {e}")
         
-        # 步骤7: 最终内容组织（确保不偏离源文本）
+        # 步骤7: 最终内容组织
         try:
             state = self.organization_agent.run(state)
         except Exception as e:
             print(f"内容组织失败: {e}")
         
-        # 参考文献已在RetrievalAgent中搜索完成，直接使用
         references = []
         for doc in state.get("retrieved_docs", [])[:5]:
             references.append({
@@ -249,18 +241,17 @@ class PageDeepAnalysisService:
                 "snippet": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
             })
         
-        # 转换 expanded_content 为字典列表
         expanded_content_list = []
         if state.get("expanded_content"):
             for ec in state["expanded_content"]:
-                if hasattr(ec, 'concept'):  # 是 ExpandedContent 对象
+                if hasattr(ec, 'concept'):  
                     expanded_content_list.append({
                         "concept": ec.concept,
                         "gap_type": ec.gap_type,
                         "content": ec.content,
                         "sources": ec.sources
                     })
-                else:  # 是字典
+                else:  
                     expanded_content_list.append(ec)
         
         return DeepAnalysisResult(
