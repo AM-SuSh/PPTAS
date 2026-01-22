@@ -12,6 +12,9 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 class DocumentParserService:
     """Parse PPTX/PDF into structured slide items with semantic hierarchy."""
 
+    def __init__(self):
+        pass
+
     def parse_document(self, path: str, ext: str) -> List[Dict[str, Any]]:
         if ext == ".pdf":
             return self._parse_pdf(path)
@@ -254,24 +257,62 @@ class DocumentParserService:
                                 })
                 elif b["type"] == 1:  # Image block
                     image_count += 1
-
             # 按垂直位置排序
             text_items.sort(key=lambda x: x["bbox"][1])
 
-            title = f"Page {i}"
+            title = ""
             raw_points = []
             slide_type = "content"
 
             if text_items:
                 max_size = max(t["size"] for t in text_items)
                 
-                # 1. 提取标题（Top region + Large font）
+                # 1. 提取标题 - 优先级：字号最大 + 在页面上方的文字
+                # 第一优先级：字号最大且在页面上方（前40%）的文字
                 title_candidates = [
                     t for t in text_items
                     if t["size"] >= max_size * 0.9 and t["bbox"][1] < page.rect.height * 0.4
                 ]
+                
+                # 第二优先级：如果没找到，就用字号最大的文字（但在页面前50%）
+                if not title_candidates:
+                    title_candidates = [
+                        t for t in text_items
+                        if t["size"] >= max_size * 0.85 and t["bbox"][1] < page.rect.height * 0.5
+                    ]
+                
+                # 第三优先级：如果还是没找到，就用最大字号的第一个
+                if not title_candidates and text_items:
+                    title_candidates = [t for t in text_items if t["size"] == max_size][:1]
+                
+                # 合并标题候选，保留原始中英文混合
                 if title_candidates:
-                    title = " ".join([t["text"] for t in title_candidates])
+                    title = " ".join([t["text"].strip() for t in title_candidates if t["text"].strip()])
+                    # 过滤掉纯数字的标题
+                    if title and not title.replace(" ", "").isdigit():
+                        pass  # 保留这个标题
+                    else:
+                        title = ""  # 纯数字就清空
+                
+                # 如果还是没有有效的标题，从所有文本中找一个有意义的
+                if not title:
+                    # 过滤出有意义的文本（不是纯数字，长度合理）
+                    meaningful_items = [
+                        t for t in text_items
+                        if t["text"].strip() 
+                        and len(t["text"].strip()) >= 2  # 至少2个字符
+                        and not t["text"].strip().replace(" ", "").isdigit()  # 不是纯数字
+                        and t["size"] > 10  # 字号要足够大
+                    ]
+                    
+                    if meaningful_items:
+                        # 优先选择在页面上方、字号最大的
+                        meaningful_items.sort(key=lambda x: (-x["size"], x["bbox"][1]))
+                        title = meaningful_items[0]["text"].strip()
+                
+                # 最后的 fallback（理论上不应该出现）
+                if not title:
+                    title = f"Page {i}"
 
                 # 2. 提取并合并正文内容（Paragraph Merging Logic）
                 body_items = [
@@ -323,6 +364,14 @@ class DocumentParserService:
             elif image_count > 0 and len(raw_points) < 3:
                 slide_type = "figure"
 
+            # ⭐ 最终 title 优化：如果 title 还是默认的 "Page X" 形式，从 raw_points 提取
+            if title.startswith("Page "):
+                # 从 raw_points 中找第一个有意义的文本作为 title
+                for point in raw_points:
+                    if point.strip() and len(point.strip()) >= 2 and not point.strip().isdigit():
+                        title = point.strip()[:100]  # 取第一个有意义的文本
+                        break
+            
             # 统一数据结构：将 PDF 的字符串列表转换为带层级的对象列表，以匹配 PPTX 格式
             structured_points = [
                 {"type": "text", "level": 0, "text": p} for p in raw_points
