@@ -1,6 +1,5 @@
 """
 MCP (Model Context Protocol) 工具集成
-支持维基百科、Arxiv、Google Scholar 等外部知识源
 """
 
 from typing import List, Dict, Any, Optional
@@ -12,7 +11,7 @@ import xml.etree.ElementTree as ET
 import re
 from urllib.parse import quote
 
-# 尝试导入 LLM 配置（用于翻译）
+# 尝试导入 LLM 配置
 try:
     from src.config import ConfigManager
     from langchain_openai import ChatOpenAI
@@ -23,13 +22,12 @@ except ImportError:
 
 
 def _translate_to_english(text: str) -> str:
-    """将中文翻译成英文（用于 Arxiv 搜索）"""
+    """将中文翻译成英文"""
     if not _llm_available:
         return text
     
-    # 简单判断：如果包含中文字符，则尝试翻译
     if not re.search(r'[\u4e00-\u9fff]', text):
-        return text  # 没有中文字符，直接返回
+        return text  
     
     try:
         config_manager = ConfigManager()
@@ -52,7 +50,7 @@ def _translate_to_english(text: str) -> str:
         response = llm.invoke(prompt)
         translated = response.content.strip()
         
-        # 清理翻译结果（移除可能的引号或多余内容）
+        # 清理翻译结果
         translated = re.sub(r'^["\']|["\']$', '', translated)
         translated = translated.split('\n')[0].strip()
         
@@ -110,7 +108,6 @@ class WikipediaMCP:
             
             documents = []
             for item in data.get("query", {}).get("search", []):
-                # 获取页面内容
                 content = self._get_page_content(item["title"])
                 if content:
                     documents.append(Document(
@@ -151,7 +148,7 @@ class WikipediaMCP:
             for page in pages.values():
                 content = page.get("extract", "")
                 if content:
-                    return content[:1000]  # 限制长度
+                    return content[:1000]  
             
             return None
         except Exception as e:
@@ -170,14 +167,12 @@ class ArxivMCP:
         # 如果查询是中文，先翻译成英文
         original_query = query.strip()
         query_clean = _translate_to_english(original_query)
-        
-        # 清理查询字符串，移除特殊字符
+
         query_clean = query_clean.strip()
         # 如果查询包含多个词，使用OR连接
         if " " in query_clean:
-            # 将多个词用OR连接
             words = query_clean.split()
-            search_query = " OR ".join([f"all:{word}" for word in words[:3]])  # 最多3个词
+            search_query = " OR ".join([f"all:{word}" for word in words[:3]])  
         else:
             search_query = f"all:{query_clean}"
         
@@ -234,7 +229,6 @@ class ArxivMCP:
                     if not title:
                         continue
                     
-                    # 获取作者
                     authors = []
                     for author in entry.findall("{http://www.w3.org/2005/Atom}author"):
                         name_elem = author.find("{http://www.w3.org/2005/Atom}name")
@@ -271,7 +265,7 @@ class ArxivMCP:
 
 
 class GoogleScholarMCP:
-    """Google Scholar MCP 工具（简化版）"""
+    """Google Scholar MCP 工具"""
     
     def __init__(self):
         self.headers = {
@@ -326,7 +320,7 @@ class BaiduBaikeMCP:
         }
     
     def search(self, query: str, fallback: bool = True) -> List[Document]:
-        """搜索百度百科（灵活搜索，支持相关词条，保底搜索）"""
+        """搜索百度百科"""
         # 生成多个搜索关键词变体
         search_variants = self._generate_search_variants(query)
         
@@ -336,9 +330,8 @@ class BaiduBaikeMCP:
         all_documents = []
         seen_urls = set()
         
-        # 尝试每个搜索变体
         for variant in search_variants:
-            if len(all_documents) >= 3:  # 最多返回3个结果
+            if len(all_documents) >= 3: 
                 break
             
             variant_clean = variant.strip()
@@ -387,11 +380,10 @@ class BaiduBaikeMCP:
                     pass
                 
                 # 方法2: 从搜索结果页面获取多个结果
-                # 查找所有词条链接
                 links = soup.find_all('a', href=re.compile(r'/item/'))
                 if links:
                     print(f"      找到 {len(links)} 个词条链接")
-                    for link_elem in links[:5]:  # 增加尝试数量
+                    for link_elem in links[:5]:  
                         if len(all_documents) >= 3:
                             break
                         
@@ -399,7 +391,6 @@ class BaiduBaikeMCP:
                         if not href:
                             continue
                         
-                        # 构建完整URL
                         if href.startswith('//'):
                             full_url = 'https:' + href
                         elif href.startswith('/'):
@@ -436,16 +427,13 @@ class BaiduBaikeMCP:
                 
                 # 方法3: 如果还没找到，尝试从搜索结果页面提取文本摘要
                 if len(all_documents) == 0:
-                    # 查找搜索结果摘要
                     result_items = soup.find_all(['div', 'dd'], class_=re.compile(r'search|result|item'))
                     for item in result_items[:3]:
                         text = item.get_text().strip()
-                        if text and len(text) > 50:  # 至少50字符
-                            # 尝试提取标题
+                        if text and len(text) > 50:  
                             title_elem = item.find(['a', 'h3', 'h4'])
                             title = title_elem.get_text().strip() if title_elem else query
                             
-                            # 提取链接
                             link_elem = item.find('a', href=re.compile(r'/item/'))
                             if link_elem:
                                 href = link_elem.get('href', '')
@@ -476,12 +464,11 @@ class BaiduBaikeMCP:
             except Exception:
                 continue
         
-        # 保底：如果还是没找到，使用通用词条
+        # 保底使用通用词条
         if len(all_documents) == 0 and fallback:
             print(f"      ⚠️  未找到直接匹配，尝试保底搜索...")
-            # 尝试搜索核心概念
             core_concepts = self._extract_core_concepts(query)
-            for concept in core_concepts[:2]:  # 最多尝试2个核心概念
+            for concept in core_concepts[:2]: 
                 if len(all_documents) > 0:
                     break
                 try:
@@ -519,7 +506,7 @@ class BaiduBaikeMCP:
         cleaned = re.sub(r'(在|的|中|和|与|及|应用|方法|技术|系统|模型|攻击|安全|隐私)', ' ', query)
         words = [w for w in cleaned.split() if len(w) >= 2]
         
-        # 优先选择较长的词（通常是核心概念）
+        # 优先选择较长的词
         words.sort(key=len, reverse=True)
         concepts.extend(words[:3])
         
@@ -527,10 +514,10 @@ class BaiduBaikeMCP:
         if len(query.split()) == 1 and query not in concepts:
             concepts.insert(0, query)
         
-        return concepts[:3]  # 最多3个
+        return concepts[:3]  
     
     def _generate_search_variants(self, query: str) -> List[str]:
-        """生成搜索关键词变体（更灵活的搜索）"""
+        """生成搜索关键词变体"""
         variants = []
         
         # 1. 原始查询
@@ -547,12 +534,12 @@ class BaiduBaikeMCP:
         if core_words and core_words != query:
             variants.append(core_words)
         
-        # 4. 只取第一个词（如果是复合词）
+        # 4. 只取第一个词
         first_word = query.split()[0] if query.split() else query
         if first_word and first_word != query and len(first_word) >= 2:
             variants.append(first_word)
         
-        # 5. 提取关键词（移除常见修饰词）
+        # 5. 提取关键词
         keywords = re.sub(r'(在|的|中|和|与|及|应用|方法|技术|系统|模型)', ' ', query)
         keywords = ' '.join([w for w in keywords.split() if len(w) > 1])
         if keywords and keywords != query:
@@ -566,11 +553,11 @@ class BaiduBaikeMCP:
                 seen.add(v)
                 unique_variants.append(v)
         
-        return unique_variants[:5]  # 最多5个变体
+        return unique_variants[:5]  
 
 
 class MCPRouter:
-    """MCP 工具路由器 - 智能选择最佳工具"""
+    """MCP 工具路由器"""
     
     def __init__(self):
         self.tools = {
@@ -579,7 +566,7 @@ class MCPRouter:
             "scholar": GoogleScholarMCP(),
             "baike": BaiduBaikeMCP()
         }
-        # 启用所有源，让调用者决定使用哪些
+        # 启用所有源
         self.enabled_sources = ["arxiv", "wikipedia", "baike"]  
     
     def search(self, query: str, preferred_sources: List[str] = None) -> List[Document]:
@@ -591,7 +578,7 @@ class MCPRouter:
         """
         all_documents = []
         
-        # 如果指定了优先源，使用它们
+        # 使用指定优先源
         if preferred_sources:
             print(f"🔍 MCPRouter: 使用指定源 {preferred_sources} 搜索 '{query}'")
             for source in preferred_sources:
@@ -604,7 +591,7 @@ class MCPRouter:
                     if source == "arxiv":
                         docs = self.tools[source].search(query, max_results=3)
                     elif source == "baike":
-                        # 百度作为保底，确保能搜到东西
+                        # 百度作为保底
                         docs = self.tools[source].search(query, fallback=True)
                     elif source == "wikipedia":
                         docs = self.tools[source].search(query, limit=3)
@@ -619,7 +606,7 @@ class MCPRouter:
                     traceback.print_exc()
                     continue
         else:
-            # 自动选择：优先使用 Arxiv（更稳定）
+            # 优先使用 Arxiv
             print(f"🔍 MCPRouter: 自动选择源搜索 '{query}'")
             try:
                 docs = self.tools["arxiv"].search(query, max_results=3)
@@ -628,7 +615,6 @@ class MCPRouter:
             except Exception as e:
                 print(f"   ❌ Arxiv 搜索失败: {e}")
         
-        # 如果没有结果，不返回占位符（让调用者处理）
         if not all_documents:
             print(f"   ⚠️  所有源都没有找到结果")
         
@@ -641,10 +627,9 @@ class MCPRouter:
                 seen_urls.add(url)
                 unique_docs.append(doc)
             elif not url:
-                # 允许本地占位符文档
                 unique_docs.append(doc)
         
-        return unique_docs[:5]  # 限制结果数量
+        return unique_docs[:5] 
     
     def _is_academic_query(self, query: str) -> bool:
         """判断是否为学术查询"""
