@@ -1,6 +1,7 @@
 import os
 import tempfile
 import json
+import asyncio
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 import uuid
@@ -1080,7 +1081,7 @@ async def search_references(
     request: ReferenceSearchRequest,
     service: ReferenceSearchService = Depends(get_reference_search_service),
 ):
-    """搜索参考文献
+    """搜索参考文献（整合本地和外部搜索）
     
     Args:
         request: 搜索请求
@@ -1091,11 +1092,25 @@ async def search_references(
     """
     try:
         if request.search_type == "academic":
-            result = service.search_academic_papers(request.query, request.max_results)
+            result = await service.search_references_async(
+                request.query, 
+                request.max_results,
+                preferred_sources=["arxiv"],
+                use_external=True
+            )
         elif request.search_type == "general":
-            result = service.search_general_knowledge(request.query, request.max_results)
+            result = await service.search_references_async(
+                request.query, 
+                request.max_results,
+                preferred_sources=["wikipedia", "web"],
+                use_external=True
+            )
         else:
-            result = service.search_references(request.query, request.max_results)
+            result = await service.search_references_async(
+                request.query, 
+                request.max_results,
+                use_external=True
+            )
         
         return {
             "success": True,
@@ -1106,12 +1121,15 @@ async def search_references(
                     "title": ref.title,
                     "url": ref.url,
                     "source": ref.source,
-                    "snippet": ref.snippet
+                    "snippet": ref.snippet,
+                    "metadata": ref.metadata
                 }
                 for ref in result.references
             ]
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
@@ -1135,7 +1153,7 @@ async def search_by_concepts(
         按概念组织的搜索结果
     """
     try:
-        results = service.search_by_concepts(concepts, max_per_concept)
+        results = await service.search_by_concepts_async(concepts, max_per_concept, use_external=True)
         
         return {
             "success": True,
@@ -1148,7 +1166,8 @@ async def search_by_concepts(
                             "title": ref.title,
                             "url": ref.url,
                             "source": ref.source,
-                            "snippet": ref.snippet
+                            "snippet": ref.snippet,
+                            "metadata": ref.metadata
                         }
                         for ref in result.references
                     ]
@@ -1157,9 +1176,79 @@ async def search_by_concepts(
             }
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
+        )
+
+
+class ExternalSearchRequest(BaseModel):
+    """外部搜索请求"""
+    query: str
+    sources: Optional[List[str]] = None  # ["wikipedia", "arxiv", "web"]
+    max_results: int = 10
+
+
+@app.post("/api/v1/search-external")
+async def search_external(
+    request: ExternalSearchRequest,
+    service: ReferenceSearchService = Depends(get_reference_search_service),
+):
+    """外部资源搜索（Wikipedia、Arxiv、Web）
+    
+    Args:
+        request: 外部搜索请求
+        service: 搜索服务
+    
+    Returns:
+        外部搜索结果
+    """
+    try:
+        # 检查外部搜索是否可用
+        if not service.external_search.is_available():
+            return {
+                "success": False,
+                "error": "外部搜索服务不可用，请安装依赖: pip install wikipedia arxiv duckduckgo-search",
+                "available_sources": []
+            }
+        
+        # 执行外部搜索（直接使用 await，因为已经在异步上下文中）
+        result = await service.external_search.search_all(
+            request.query,
+            sources=request.sources,
+            max_results_per_source=max(2, request.max_results // 3)
+        )
+        
+        return {
+            "success": True,
+            "query": result.query,
+            "total_results": result.total_results,
+            "sources_used": result.sources_used,
+            "available_sources": service.external_search.get_available_sources(),
+            "results": [
+                {
+                    "title": r.title,
+                    "url": r.url,
+                    "source": r.source,
+                    "snippet": r.snippet,
+                    "authors": r.authors,
+                    "published": r.published
+                }
+                for r in result.results
+            ]
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": str(e),
+                "available_sources": service.external_search.get_available_sources() if hasattr(service, 'external_search') else []
+            }
         )
 
 
