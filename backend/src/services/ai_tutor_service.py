@@ -1,4 +1,4 @@
-"""AI 助教对话服务 - 与优化的知识分析结构对齐"""
+"""AI 助教对话服务"""
 
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
@@ -23,7 +23,7 @@ class ChatMessage:
 
 
 class AITutorService:
-    """AI 助教服务 - 基于优化的知识分析与学生理解焦点的对话"""
+    """AI 助教服务"""
     
     def __init__(self, llm_config):
         self.llm = llm_config.create_llm(temperature=0.7)
@@ -107,38 +107,33 @@ class AITutorService:
             self.conversations[page_id] = []
         
         conversation_history = self.conversations[page_id]
-        
-        # 构建系统提示词（优化版，聚焦学生理解）
+
         system_message = self._build_system_prompt(context, conversation_history)
-        
-        # 构建完整的对话
+
         messages = [
             SystemMessagePromptTemplate.from_template(system_message).format()
         ]
         
-        # 添加对话历史（保留最近的上下文）
-        for msg in conversation_history[-6:]:  # 保留最近 6 条消息
+        # 添加对话历史
+        for msg in conversation_history[-6:]:  
             if msg.role == "user":
                 messages.append(HumanMessagePromptTemplate.from_template("{text}").format(text=msg.content))
             else:
                 from langchain_core.messages import AIMessage
                 messages.append(AIMessage(content=msg.content))
         
-        # 添加当前用户消息
         messages.append(HumanMessagePromptTemplate.from_template("{text}").format(text=user_message))
         
-        # 调用 LLM
         response = self.llm.invoke(messages)
         assistant_message = response.content
         
-        # 保存对话到历史
         conversation_history.append(ChatMessage(role="user", content=user_message))
         conversation_history.append(ChatMessage(role="assistant", content=assistant_message))
         
         return assistant_message
     
     def _build_system_prompt(self, context: Dict[str, Any], history: List[ChatMessage]) -> str:
-        """构建系统提示词 - 聚焦学生理解障碍"""
+        """构建系统提示词"""
         template = """你是一位耐心的 AI 学习助教，帮助学生理解和掌握知识。
 
 【页面标题】: {title}
@@ -177,13 +172,11 @@ class AITutorService:
 现在请基于学生的问题和当前内容进行耐心、清晰的讲解。
 """
         
-        # 提取知识聚类信息
+        # 提取信息
         concepts_analysis = self._format_concepts(context.get("knowledge_clusters", []))
         
-        # 提取知识缺口信息
         gaps_info = self._format_gaps(context.get("knowledge_gaps", []))
         
-        # 提取补充说明信息
         expanded_content = self._format_expanded_content(context.get("expanded_content", []))
         
         # 找出难度高的概念
@@ -196,7 +189,7 @@ class AITutorService:
         
         return template.format(
             title=context.get("title", ""),
-            content=context.get("content", "")[:800],  # 限制长度
+            content=context.get("content", "")[:800], 
             understanding_notes=context.get("understanding_notes", "")[:500],
             concepts_analysis=concepts_analysis,
             gaps_info=gaps_info,
@@ -210,7 +203,7 @@ class AITutorService:
             return "- 无特别分类"
         
         lines = []
-        for c in clusters[:5]:  # 最多 5 个
+        for c in clusters[:5]: 
             concept = c.get("concept", "未知")
             difficulty = c.get("difficulty_level", 0)
             why_difficult = c.get("why_difficult", "")
@@ -228,7 +221,7 @@ class AITutorService:
             return "- 无识别到的重大缺口"
         
         lines = []
-        for g in gaps[:3]:  # 最多 3 个
+        for g in gaps[:3]: 
             concept = g.get("concept", "未知")
             gap_types = g.get("gap_types", [])
             priority = g.get("priority", 0)
@@ -247,7 +240,7 @@ class AITutorService:
             return "- 无额外补充"
         
         lines = []
-        for e in expanded[:3]:  # 最多 3 条
+        for e in expanded[:3]:  
             concept = e.get("concept", "未知")
             content = e.get("content", "")[:100]
             

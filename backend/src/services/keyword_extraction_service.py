@@ -1,4 +1,4 @@
-"""关键词提取服务 - 从PPT内容中提取有意义的中文名词短语"""
+"""关键词提取服务"""
 
 import re
 from typing import List, Dict, Any, Optional
@@ -10,10 +10,9 @@ from ..agents.base import LLMConfig
 
 
 class KeywordExtractionService:
-    """关键词提取服务"""
+    """从PPT内容中提取有意义的中文名词短语"""
     
     def __init__(self, llm_config: LLMConfig):
-        # temperature=0.3 允许一定创意但保持一致性
         self.llm = llm_config.create_llm(temperature=0.5)
         self.llm_config = llm_config
     
@@ -21,13 +20,13 @@ class KeywordExtractionService:
         """从内容中提取关键词
         
         Args:
-            content: 页面内容（raw_content或raw_points组合）
+            content: 页面内容
             title: 页面标题
             num_keywords: 要提取的关键词数量
             raw_points: 原始数据点列表
         
         Returns:
-            关键词列表（已验证为有意义的名词短语，不是纯英文或数字）
+            关键词列表
         """
         # 如果 content 为空，尝试从 raw_points 构建内容
         if not content or not content.strip():
@@ -39,7 +38,6 @@ class KeywordExtractionService:
                         if point.get('type') == 'text' and point.get('text'):
                             points_text.append(point.get('text', ''))
                         elif point.get('type') == 'table' and point.get('data'):
-                            # 表格内容
                             table_rows = point.get('data', [])
                             for row in table_rows:
                                 if isinstance(row, list):
@@ -48,17 +46,16 @@ class KeywordExtractionService:
                         points_text.append(str(point))
                 
                 if points_text:
-                    content = "页面内容：" + " | ".join(points_text[:10])  # 取前10个点
+                    content = "页面内容：" + " | ".join(points_text[:10]) 
                     print(f"   📝 从raw_points构建内容: {content[:100]}")
             
             # 如果还是没有content，用标题
             if not content or not content.strip():
-                if title and title.strip() and title != "1":  # 避免用"1"作为关键词
+                if title and title.strip() and title != "1":  
                     content = f"页面标题: {title}"
                 else:
                     return []
         
-        # 限制内容长度以加快处理
         max_content_length = 2000
         content = content[:max_content_length]
         
@@ -98,7 +95,6 @@ class KeywordExtractionService:
                 "num_keywords": num_keywords
             })
             
-            # 解析LLM响应
             response_text = response.content.strip()
             print(f"📝 LLM原始响应: {response_text[:100]}")
             
