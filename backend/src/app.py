@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from src.services.mindmap_service import MindmapService
 from src.services.persistence_service import PersistenceService
 from src.services.export_service import ExportService
+from src.services.keyword_extraction_service import KeywordExtractionService
 
 app = FastAPI(title="PPTAS Backend", version="0.2.0")
 
@@ -115,6 +116,16 @@ class ExportRequest(BaseModel):
     file_name: Optional[str] = None
     file_type: Optional[str] = None  # "pdf" 或 "pptx"
     min_score: float = 0.0
+
+
+class KeywordExtractionRequest(BaseModel):
+    """关键词提取请求"""
+    page_id: int
+    title: str = ""
+    content: str
+    raw_points: Optional[List[dict]] = None
+    knowledge_clusters: Optional[List[dict]] = None
+    num_keywords: int = Field(default=5, ge=1, le=10)
 
 
 # ==================== 配置加载 ====================
@@ -308,6 +319,16 @@ def get_ai_tutor_service():
         model=config["llm"]["model"]
     )
     return AITutorService(llm_config)
+
+
+def get_keyword_extraction_service():
+    config = load_config()
+    llm_config = LLMConfig(
+        api_key=config["llm"]["api_key"],
+        base_url=config["llm"]["base_url"],
+        model=config["llm"]["model"]
+    )
+    return KeywordExtractionService(llm_config)
 
 
 def get_reference_search_service():
@@ -1705,6 +1726,57 @@ async def export_analysis(
         raise HTTPException(
             status_code=500,
             detail=f"导出失败: {str(e)}"
+        )
+
+
+@app.post("/api/v1/extract-keywords")
+async def extract_keywords(
+    request: KeywordExtractionRequest,
+    service: KeywordExtractionService = Depends(get_keyword_extraction_service),
+):
+    """提取页面关键词 - 5个有意义的中文名词短语
+    
+    Args:
+        request: 关键词提取请求，包含页面ID、标题、内容等
+        service: 关键词提取服务
+    
+    Returns:
+        提取的关键词列表和统计信息
+    """
+    try:
+        print(f"\n🔍 关键词提取请求: page_id={request.page_id}, title={request.title[:30]}")
+        print(f"   content长度: {len(request.content) if request.content else 0}")
+        print(f"   raw_points数量: {len(request.raw_points) if request.raw_points else 0}")
+        
+        keywords = service.extract_keywords(
+            content=request.content,
+            title=request.title,
+            num_keywords=request.num_keywords,
+            raw_points=request.raw_points
+        )
+        
+        print(f"\n✅ 关键词提取完成: {keywords} (共{len(keywords)}个)")
+        
+        return {
+            "success": True,
+            "page_id": request.page_id,
+            "keywords": keywords,
+            "count": len(keywords),
+            "message": f"成功提取 {len(keywords)} 个关键词"
+        }
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"❌ 关键词提取失败: {str(e)}")
+        print(f"详细错误:\n{error_trace}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "page_id": request.page_id,
+                "error": str(e),
+                "message": "关键词提取失败"
+            }
         )
 
 

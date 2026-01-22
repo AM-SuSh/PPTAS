@@ -12,6 +12,9 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 class DocumentParserService:
     """Parse PPTX/PDF into structured slide items with semantic hierarchy."""
 
+    def __init__(self):
+        pass
+
     def parse_document(self, path: str, ext: str) -> List[Dict[str, Any]]:
         if ext == ".pdf":
             return self._parse_pdf(path)

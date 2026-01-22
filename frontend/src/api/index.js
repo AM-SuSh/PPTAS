@@ -254,5 +254,16 @@ export const pptApi = {
             sources,  // ["wikipedia", "arxiv", "web"] 或 null（全部）
             max_results: maxResults
         })
+            },
+
+    // 新增方法 - 提取关键词
+    extractKeywords(pageId, title, content, rawPoints, numKeywords = 5) {
+        return service.post('/extract-keywords', {
+            page_id: pageId,
+            title,
+            content,
+            raw_points: rawPoints,
+            num_keywords: numKeywords
+        })
     }
 }

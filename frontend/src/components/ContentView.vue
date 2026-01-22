@@ -24,6 +24,9 @@ const isChatting = ref(false)
 const messagesContainer = ref(null)
 const isInitializingChat = ref(false)
 
+// 关键词提取相关
+const isLoadingKeywords = ref(false)
+
 // Search 相关
 const searchQuery = ref('')
 const isSearching = ref(false)
@@ -709,10 +712,62 @@ const sendChatMessage = async () => {
   }
 }
 
+// 加载关键词
+const loadKeywords = async () => {
+  if (!props.slide || !props.slide.page_num) {
+    console.warn('⚠️ 无法加载关键词：页面信息缺失')
+    return
+  }
+  
+  // ⭐ 检查缓存：如果已经提取过关键词，直接使用缓存
+  if (props.slide.keywords && Array.isArray(props.slide.keywords) && props.slide.keywords.length > 0) {
+    console.log('✅ 关键词缓存存在，使用已提取的关键词:', props.slide.keywords)
+    isLoadingKeywords.value = false
+    return
+  }
+  
+  try {
+    isLoadingKeywords.value = true
+    console.log('🔍 开始加载关键词...', {
+      page_num: props.slide.page_num,
+      title: props.slide.title,
+      content_length: props.slide.raw_content?.length || 0,
+      raw_points: props.slide.raw_points?.length || 0
+    })
+    
+    const response = await pptApi.extractKeywords(
+      props.slide.page_num,
+      props.slide.title || '',
+      props.slide.raw_content || '',
+      props.slide.raw_points || [],
+      5  // 5个关键词
+    )
+    
+    console.log('📦 API响应:', response.data)
+    
+    if (response.data?.success && response.data?.keywords) {
+      // 将关键词保存到slide对象（缓存）
+      props.slide.keywords = response.data.keywords
+      console.log('✅ 关键词已提取并缓存:', props.slide.keywords)
+    } else {
+      console.warn('⚠️ 关键词加载返回成功但无数据:', response.data)
+      props.slide.keywords = []
+    }
+  } catch (error) {
+    console.error('❌ 关键词加载错误:', error)
+    props.slide.keywords = []
+  } finally {
+    isLoadingKeywords.value = false
+  }
+}
+
 // 监听 slide 变化，重新初始化聊天
 watch(() => props.slide?.page_num, async (newPageNum, oldPageNum) => {
   if (newPageNum !== oldPageNum && newPageNum) {
     console.log('📄 页面切换:', oldPageNum, '->', newPageNum)
+    
+    // 加载关键词
+    await loadKeywords()
     
     // 如果当前在聊天标签，立即初始化
     if (props.activeTool === 'chat') {
@@ -741,6 +796,9 @@ watch(() => props.activeTool, async (newTool, oldTool) => {
 
 // 组件挂载时的初始化
 onMounted(async () => {
+  // 加载初始关键词
+  await loadKeywords()
+  
   if (props.slide?.page_num && props.activeTool === 'chat') {
     await initChat()
   }
@@ -768,34 +826,23 @@ const formatTime = (timestamp) => {
       <div class="content-body">
         <div class="card">
           <h3 class="card-title">原始逻辑</h3>
-          <div class="point-container">
-            <template v-for="(point, idx) in slide.raw_points" :key="idx">
-              <!-- 文本段落 -->
-              <div 
-                v-if="point.type === 'text'" 
-                class="point-item"
-                :class="`level-${point.level || 0}`"
-              >
-                <div class="point-marker">
-                   <span v-if="(point.level || 0) === 0">•</span>
-                   <span v-else-if="(point.level || 0) === 1">◦</span>
-                   <span v-else>-</span>
-                </div>
-                <div class="point-content">{{ point.text }}</div>
-              </div>
-              
-              <!-- 表格 -->
-              <div v-else-if="point.type === 'table'" class="point-table-wrapper">
-                 <table class="simple-table">
-                   <tbody>
-                     <tr v-for="(row, rIdx) in point.data" :key="rIdx">
-                       <td v-for="(cell, cIdx) in row" :key="cIdx">{{ cell }}</td>
-                     </tr>
-                   </tbody>
-                 </table>
-              </div>
-            </template>
+          
+          <!-- 关键词加载中提示 -->
+          <div v-if="isLoadingKeywords" class="keywords-loading">
+            <div class="loading-spinner">⏳</div>
+            <div class="loading-text">正在提取关键词，请稍候...</div>
           </div>
+          
+          <!-- 关键词展示 -->
+          <div v-if="!isLoadingKeywords && slide.keywords && slide.keywords.length > 0" class="keywords-section">
+            <div class="keywords-label">📌 关键词提取</div>
+            <div class="keywords-container">
+              <span v-for="(keyword, idx) in slide.keywords" :key="idx" class="keyword-tag">
+                {{ keyword }}
+              </span>
+            </div>
+          </div>
+          
           <!-- 图片信息展示区域 -->
           <div v-if="slide.images && slide.images.length > 0" class="image-info-section">
             <div class="info-label">🖼️ 幻灯片图像信息:</div>
@@ -1871,6 +1918,82 @@ const formatTime = (timestamp) => {
   background-color: #f1f5f9;
   font-weight: 600;
   color: #1e293b;
+}
+
+/* 关键词样式 */
+.keywords-section {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-left: 4px solid #0284c7;
+  border-radius: 6px;
+}
+
+.keywords-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #0c4a6e;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.keywords-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.keyword-tag {
+  display: inline-block;
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  color: white;
+  padding: 0.4rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  box-shadow: 0 2px 4px rgba(2, 132, 199, 0.2);
+  transition: all 0.3s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+/* 关键词加载中样式 */
+.keywords-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  padding: 1rem;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-left: 4px solid #0284c7;
+  border-radius: 6px;
+  margin-bottom: 1.5rem;
+}
+
+.loading-spinner {
+  font-size: 1.5rem;
+  animation: spin 1.5s linear infinite;
+}
+
+.loading-text {
+  color: #0c4a6e;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.keyword-tag:hover {
+  background: linear-gradient(135deg, #0369a1 0%, #075985 100%);
+  box-shadow: 0 4px 8px rgba(2, 132, 199, 0.3);
+  transform: translateY(-2px);
 }
 
 /* 分析状态样式 */
