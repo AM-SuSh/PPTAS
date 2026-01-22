@@ -232,13 +232,6 @@
 返回 doc_id 和 slides 数据
 ```
 
-**文档解析流程图**:
-
-![ ](photos/3.png)  
-
-**数据流**:
-
-![ ](photos/4.png)  
 
 ### 2.2 全局分析功能
 
@@ -504,13 +497,6 @@ KnowledgeClusteringAgent → knowledge_units
 4. **早期退出**: 所有源都不可用时立即返回
 5. **结果过滤**: 去除占位符文档，仅保留有有效 URL 的结果
 
-**连接检查优化**:
-
-在 AI 答复之前进行连接检查：
-
-**连接检查流程图**:
-
-![ ](photos/6.png)  
 
 **实现代码**:
 ```python
@@ -783,8 +769,6 @@ if request.doc_id and not request.force:
 **实现位置**: `backend/src/services/mindmap_service.py` - `MindmapService`
 
 **功能**:
-- 从单页幻灯片生成思维导图
-- 从整个 PPT 生成思维导图
 - 从全局分析结果生成思维导图
 
 **API 端点**:
@@ -804,18 +788,12 @@ if request.doc_id and not request.force:
 }
 ```
 
-**思维导图生成流程**:
-
-![ ](photos/10.png)
-
 ### 2.8 分析结果导出
 
 **实现位置**: `backend/src/services/export_service.py` - `ExportService`
 
 **功能**:
-- 导出分析摘要为 Markdown 格式
 - 导出完整分析内容为 Markdown 格式
-- 支持指定页面范围导出
 
 **API 端点**: `POST /api/v1/export`
 
@@ -824,9 +802,6 @@ if request.doc_id and not request.force:
 - 全局分析结果（主题、章节、知识点单元）
 - 页面分析结果（学习笔记、知识缺口、补充说明、参考资料）
 
-**导出流程图**:
-
-![ ](photos/11.png)
 
 ### 2.9 关键词提取
 
@@ -1564,7 +1539,7 @@ def get_page_analysis_service():
 向量化并存储到 ChromaDB（VectorStoreService）
   ↓
 返回 doc_id 和 slides 数据
-'''
+```
 
 #### 全局分析流程
 
