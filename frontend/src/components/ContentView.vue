@@ -50,18 +50,67 @@ const isAnalyzingPage = ref(false)  // 追踪AI分析是否正在进行中
 // Markdown 转 HTML 工具函数
 const markdownToHtml = (markdown) => {
   if (!markdown) return ''
-  return markdown
-    .replace(/^### (.*)/gm, '<h3>$1</h3>')
-    .replace(/^## (.*)/gm, '<h2>$1</h2>')
-    .replace(/^# (.*)/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/\n- (.*)/gm, '\n<li>$1</li>')
-    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/^(?!<[^>]*>)/gm, '<p>')
-    .replace(/$/gm, '</p>')
-    .replace(/\n/g, '<br>')
+  
+  let html = markdown
+  
+  // 处理代码块（先处理，避免被其他规则影响）
+  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
+  
+  // 处理标题（按顺序从大到小）
+  html = html.replace(/^#### (.*)$/gm, '<h4>$1</h4>')
+  html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>')
+  html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>')
+  html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>')
+  
+  // 处理粗斜体（***text***）必须在粗体和斜体之前
+  html = html.replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
+  
+  // 处理粗体（**text**）
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+  
+  // 处理斜体（*text*），但要避免匹配列表项
+  html = html.replace(/(?<!\n)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>')
+  
+  // 处理删除线
+  html = html.replace(/~~(.*?)~~/g, '<del>$1</del>')
+  
+  // 处理引用块
+  html = html.replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
+  
+  // 处理无序列表
+  html = html.replace(/^[\*\-\+] (.+)$/gm, '<li>$1</li>')
+  // 将连续的<li>包裹在<ul>中
+  html = html.replace(/(<li>.*<\/li>)(?=\s*<li>|$)/gs, (match) => {
+    // 检查是否已经被包裹
+    if (match.includes('<ul>')) return match
+    return '<ul>' + match + '</ul>'
+  })
+  
+  // 处理有序列表
+  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+  // 将连续的有序列表项包裹在<ol>中（简化处理）
+  
+  // 处理水平线
+  html = html.replace(/^---$/gm, '<hr>')
+  html = html.replace(/^\*\*\*$/gm, '<hr>')
+  
+  // 处理换行：将双换行转换为段落分隔
+  html = html.split('\n\n').map(para => {
+    // 如果段落已经是HTML标签，直接返回
+    if (para.match(/^<[h|u|o|p|b|d|h]/)) {
+      return para
+    }
+    // 否则包裹在<p>标签中
+    para = para.trim()
+    if (!para) return ''
+    return '<p>' + para + '</p>'
+  }).join('')
+  
+  // 处理单换行（在段落内）
+  html = html.replace(/\n/g, '<br>')
+  
+  return html
 }
 
 
@@ -524,92 +573,6 @@ const handleSearch = () => {
   }, 1000)
 }
 
-// 联合检查后端和 LLM 连接
-const checkSystemConnection = async () => {
-  try {
-    const response = await pptApi.checkHealthComplete()
-    const data = response.data
-    
-    console.log('📊 系统连接检查结果:', data)
-    
-    const backend = data.backend || {}
-    const llm = data.llm || {}
-    
-    let message = '🔗 系统连接诊断结果\n\n'
-    message += '═════════════════════════════════════\n'
-    
-    // 后端状态
-    message += '🖥️  后端服务:\n'
-    if (backend.status === 'ok') {
-      message += `   ✅ 状态: 正常\n`
-      message += `   版本: ${backend.version}\n`
-    } else {
-      message += `   ❌ 状态: ${backend.status || '未知'}\n`
-      message += `   消息: ${backend.message || '无'}\n`
-    }
-    
-    message += '\n'
-    
-    // LLM 状态
-    message += '🤖 LLM 服务:\n'
-    if (llm.status === 'ok') {
-      message += `   ✅ 状态: 连接正常\n`
-      message += `   模型: ${llm.model}\n`
-      message += `   信息: ${llm.response_preview || '就绪'}\n`
-    } else if (llm.status === 'warning') {
-      message += `   ⚠️  状态: 警告\n`
-      message += `   模型: ${llm.model}\n`
-      message += `   消息: ${llm.message || '未知'}\n`
-      message += `   状态码: ${llm.response_preview || '未知'}\n`
-    } else {
-      message += `   ❌ 状态: ${llm.status || '未知'}\n`
-      message += `   模型: ${llm.model}\n`
-      message += `   消息: ${llm.message || '连接失败'}\n`
-      message += `   详情: ${llm.response_preview || llm.detail || '无'}\n`
-      
-      // 添加解决建议
-      if (!llm.configured) {
-        message += '\n💡 解决方案：\n'
-        message += '   1. 检查 config.json 中的 api_key 配置\n'
-        message += '   2. 确认 API Key 有效期\n'
-        message += '   3. 检查网络连接'
-      } else if (llm.message && llm.message.includes('无法连接')) {
-        message += '\n💡 解决方案：\n'
-        message += '   1. 检查网络连接\n'
-        message += '   2. 检查代理设置\n'
-        message += '   3. 确认 base_url 配置正确'
-      }
-    }
-    
-    message += '\n═════════════════════════════════════'
-    
-    alert(message)
-  } catch (error) {
-    let errorMsg = '❌ 系统连接检查失败\n\n'
-    
-    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-      errorMsg += '原因: 请求超时\n\n'
-      errorMsg += '请检查：\n'
-      errorMsg += '• 后端服务是否运行\n'
-      errorMsg += '• 网络连接是否正常\n'
-      errorMsg += '• 防火墙设置'
-    } else if (error.response) {
-      errorMsg += `原因: 后端返回错误 (HTTP ${error.response.status})\n\n`
-      errorMsg += '请检查后端日志'
-    } else if (!error.response) {
-      errorMsg += '原因: 无法连接到后端\n\n'
-      errorMsg += '请检查：\n'
-      errorMsg += '• 后端服务是否启动\n'
-      errorMsg += '• 地址是否为 http://localhost:8000\n'
-      errorMsg += '• 网络连接是否正常'
-    } else {
-      errorMsg += '原因: ' + error.message
-    }
-    
-    console.error('❌ 系统连接检查错误:', error)
-    alert(errorMsg)
-  }
-}
 
 
 // 监听 slide 变化，重新初始化聊天
@@ -961,7 +924,6 @@ const formatTime = (timestamp) => {
                 <div class="waiting-icon">⏳</div>
                 <p class="waiting-text">等待 AI 解析...</p>
                 <p class="waiting-hint">如果长时间未显示结果，请检查系统连接</p>
-                <button class="check-btn system-check" @click="checkSystemConnection">🔗 检查系统连接</button>
               </div>
               
               <!-- 调试信息 - 默认折叠 -->
@@ -1093,8 +1055,9 @@ const formatTime = (timestamp) => {
       :class="msg.role"
     >
       <span class="avatar">{{ msg.role === 'assistant' ? '🤖' : '👤' }}</span>
-      <div class="bubble">
-        {{ msg.content }}
+      <div class="bubble" :class="{ 'markdown-content': msg.role === 'assistant' }">
+        <div v-if="msg.role === 'assistant'" v-html="markdownToHtml(msg.content)"></div>
+        <div v-else>{{ msg.content }}</div>
         <span class="timestamp">{{ formatTime(msg.timestamp) }}</span>
       </div>
     </div>
@@ -1831,6 +1794,87 @@ const formatTime = (timestamp) => {
   line-height: 1.6;
 }
 
+.bubble.markdown-content {
+  word-wrap: break-word;
+}
+
+.bubble.markdown-content h1,
+.bubble.markdown-content h2,
+.bubble.markdown-content h3 {
+  margin: 0.5rem 0;
+  font-weight: 600;
+}
+
+.bubble.markdown-content h1 {
+  font-size: 1.5rem;
+  border-bottom: 2px solid #e2e8f0;
+  padding-bottom: 0.5rem;
+}
+
+.bubble.markdown-content h2 {
+  font-size: 1.25rem;
+  margin-top: 1rem;
+}
+
+.bubble.markdown-content h3 {
+  font-size: 1.1rem;
+  margin-top: 0.75rem;
+}
+
+.bubble.markdown-content p {
+  margin: 0.5rem 0;
+}
+
+.bubble.markdown-content strong {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.bubble.markdown-content em {
+  font-style: italic;
+}
+
+.bubble.markdown-content ul,
+.bubble.markdown-content ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+
+.bubble.markdown-content li {
+  margin: 0.25rem 0;
+}
+
+.bubble.markdown-content code {
+  background: #e2e8f0;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+.bubble.markdown-content pre {
+  background: #1e293b;
+  color: #f1f5f9;
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+
+.bubble.markdown-content pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.bubble.markdown-content blockquote {
+  border-left: 4px solid #3b82f6;
+  padding-left: 1rem;
+  margin: 0.5rem 0;
+  color: #64748b;
+  font-style: italic;
+}
+
 .chat-input-area {
   display: flex;
   gap: 10px;
@@ -2174,16 +2218,6 @@ const formatTime = (timestamp) => {
   background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
 }
 
-.check-btn.system-check {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  font-size: 1rem;
-  padding: 0.8rem 2rem;
-}
-
-.check-btn.system-check:hover {
-  background: linear-gradient(135deg, #059669 0%, #047857 100%);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-}
 
 /* AI 分析触发按钮样式 */
 .ai-analysis-trigger {
@@ -2385,6 +2419,87 @@ const formatTime = (timestamp) => {
   border-top-right-radius: 2px;
   background: #3b82f6;
   color: white;
+}
+
+.bubble.markdown-content {
+  word-wrap: break-word;
+}
+
+.bubble.markdown-content h1,
+.bubble.markdown-content h2,
+.bubble.markdown-content h3 {
+  margin: 0.5rem 0;
+  font-weight: 600;
+}
+
+.bubble.markdown-content h1 {
+  font-size: 1.5rem;
+  border-bottom: 2px solid #e2e8f0;
+  padding-bottom: 0.5rem;
+}
+
+.bubble.markdown-content h2 {
+  font-size: 1.25rem;
+  margin-top: 1rem;
+}
+
+.bubble.markdown-content h3 {
+  font-size: 1.1rem;
+  margin-top: 0.75rem;
+}
+
+.bubble.markdown-content p {
+  margin: 0.5rem 0;
+}
+
+.bubble.markdown-content strong {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.bubble.markdown-content em {
+  font-style: italic;
+}
+
+.bubble.markdown-content ul,
+.bubble.markdown-content ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+
+.bubble.markdown-content li {
+  margin: 0.25rem 0;
+}
+
+.bubble.markdown-content code {
+  background: #e2e8f0;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+.bubble.markdown-content pre {
+  background: #1e293b;
+  color: #f1f5f9;
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+
+.bubble.markdown-content pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.bubble.markdown-content blockquote {
+  border-left: 4px solid #3b82f6;
+  padding-left: 1rem;
+  margin: 0.5rem 0;
+  color: #64748b;
+  font-style: italic;
 }
 
 .timestamp {
