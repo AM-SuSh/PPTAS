@@ -34,23 +34,49 @@ class VectorStoreService:
     3. 优化搜索策略 - 提高相关性，减少噪音
     """
     
-    def __init__(self, llm_config: LLMConfig, vector_db_path: str = "./ppt_vector_db"):
-        """初始化向量存储服务"""
+    def __init__(self, llm_config: LLMConfig, vector_db_path: str = "./ppt_vector_db", embedding_model: Optional[str] = None):
+        """初始化向量存储服务
+        
+        Args:
+            llm_config: LLM配置
+            vector_db_path: 向量数据库路径
+            embedding_model: Embedding模型名称，如果为None则使用默认模型
+        """
         self.llm_config = llm_config
         self.vector_db_path = vector_db_path
 
-        try:
-            self.embeddings = OpenAIEmbeddings(
-                api_key=llm_config.api_key,
-                base_url=llm_config.base_url,
-                model="BAAI/bge-large-zh-v1.5"
-            )
-        except Exception:
-            # 如果指定模型失败，尝试不指定模型（使用默认）
-            self.embeddings = OpenAIEmbeddings(
-                api_key=llm_config.api_key,
-                base_url=llm_config.base_url
-            )
+        # 初始化Embedding模型
+        embedding_kwargs = {
+            "api_key": llm_config.api_key,
+            "base_url": llm_config.base_url
+        }
+        
+        # 如果指定了embedding模型，尝试使用它
+        if embedding_model:
+            try:
+                embedding_kwargs["model"] = embedding_model
+                self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
+                print(f"✅ 使用配置的Embedding模型: {embedding_model}")
+            except Exception as e:
+                print(f"⚠️  使用配置的Embedding模型失败 ({embedding_model}): {e}")
+                print(f"💡 尝试使用默认模型...")
+                # 移除model参数，使用默认模型
+                embedding_kwargs.pop("model", None)
+                self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
+        else:
+            # 没有指定模型，使用默认
+            try:
+                # 尝试使用常用的中文embedding模型
+                embedding_kwargs["model"] = "BAAI/bge-large-zh-v1.5"
+                self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
+                print(f"✅ 使用默认Embedding模型: BAAI/bge-large-zh-v1.5")
+            except Exception as e:
+                print(f"⚠️  默认Embedding模型不可用: {e}")
+                print(f"💡 尝试使用API默认模型...")
+                # 移除model参数，让API使用默认模型
+                embedding_kwargs.pop("model", None)
+                self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
+                print(f"✅ 使用API默认Embedding模型")
         
         self.vectorstore: Optional[Chroma] = None
         try:
@@ -422,8 +448,12 @@ class VectorStoreService:
             print(f"⚠️  向量搜索失败: {error_msg}")
             
             # 检查是否是Embedding API错误
-            if "500" in error_msg or "InternalServerError" in error_msg:
+            if "500" in error_msg or "InternalServerError" in error_msg or "50500" in error_msg:
                 print(f"❌ Embedding API 服务错误 (500)")
+                print(f"   可能原因:")
+                print(f"   1. Embedding模型不支持或配置错误")
+                print(f"   2. API服务暂时不可用")
+                print(f"   3. API Key权限不足")
                 print(f"💡 自动降级到关键词搜索...")
                 
                 # 降级到关键词搜索
@@ -435,9 +465,25 @@ class VectorStoreService:
                     )
                     if keyword_results:
                         print(f"✅ 关键词搜索成功，返回 {len(keyword_results)} 个结果")
+                        print(f"💡 提示: 关键词搜索基于文本匹配，可能不如语义搜索精确")
                         return keyword_results
                     else:
                         print(f"⚠️  关键词搜索也没有结果")
+                except Exception as e2:
+                    print(f"❌ 关键词搜索也失败: {e2}")
+            else:
+                # 其他类型的错误
+                print(f"❌ 向量搜索遇到未知错误: {error_msg}")
+                print(f"💡 尝试降级到关键词搜索...")
+                try:
+                    keyword_results = self.search_by_keyword(
+                        query=query,
+                        top_k=top_k,
+                        file_name=file_name
+                    )
+                    if keyword_results:
+                        print(f"✅ 关键词搜索成功，返回 {len(keyword_results)} 个结果")
+                        return keyword_results
                 except Exception as e2:
                     print(f"❌ 关键词搜索也失败: {e2}")
             

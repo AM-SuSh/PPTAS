@@ -99,6 +99,9 @@ class SemanticSearchRequest(BaseModel):
     """语义搜索请求"""
     query: str
     top_k: int = 5
+    file_name: Optional[str] = None
+    file_type: Optional[str] = None
+    min_score: float = 0.0
 
 
 class ExportRequest(BaseModel):
@@ -320,7 +323,9 @@ def get_vector_store_service():
     )
     # 优先使用 vector_store 配置，如果没有则使用 knowledge_base 路径
     vector_db_path = config.get("vector_store", {}).get("path") or config.get("knowledge_base", {}).get("path", "./ppt_vector_db")
-    return VectorStoreService(llm_config, vector_db_path)
+    # 从配置读取embedding模型，如果没有则使用None（让服务自己决定）
+    embedding_model = config.get("vector_store", {}).get("embedding_model")
+    return VectorStoreService(llm_config, vector_db_path, embedding_model=embedding_model)
 
 
 # ==================== API 端点 ====================
@@ -1273,9 +1278,18 @@ async def search_semantic(
             "results": results
         }
     except Exception as e:
+        import traceback
+        error_detail = str(e)
+        traceback_str = traceback.format_exc()
+        print(f"❌ 语义搜索失败: {error_detail}")
+        print(f"详细错误:\n{traceback_str}")
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={
+                "success": False,
+                "error": error_detail,
+                "message": "语义搜索失败，请检查后端日志"
+            }
         )
 
 
