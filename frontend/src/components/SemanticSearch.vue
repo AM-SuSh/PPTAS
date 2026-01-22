@@ -103,6 +103,18 @@ const performSearch = async () => {
       
       console.log('📊 原始搜索结果:', results.length, '个')
       
+      // 过滤掉第一页的结果（通常是封面页，不包含实际内容）
+      results = results.filter(r => {
+        const pageNum = r.metadata?.page_num
+        if (pageNum === 1 || pageNum === 0) {
+          console.log(`⏭️ 跳过第一页结果: ${r.metadata?.file_name} 第 ${pageNum} 页`)
+          return false
+        }
+        return true
+      })
+      
+      console.log('📊 过滤第一页后结果数:', results.length, '个')
+      
       // 优先显示当前文件的结果
       const currentFileResults = results.filter(r => 
         r.metadata?.file_name === props.currentFileName
@@ -292,21 +304,19 @@ const highlightKeywords = (text, query) => {
       </div>
 
       <div class="results-list">
-        <div
-          v-for="(result, index) in searchResults"
-          :key="`${result.metadata?.file_name}_${result.metadata?.page_num}_${index}`"
-          class="result-item"
-          :class="{ 'other-file': !isCurrentFile(result) }"
-          @click="handleResultClick(result)"
-        >
-          <div class="result-header">
-            <span class="result-score">相似度: {{ formatScore(result.score) }}</span>
-            <span class="result-meta">
-              {{ result.metadata?.file_name || '未知文件' }} - 
-              第 {{ result.metadata?.page_num || '?' }} 页
-              <span v-if="!isCurrentFile(result)" class="other-file-badge">其他文件</span>
-            </span>
-          </div>
+          <div
+            v-for="(result, index) in searchResults"
+            :key="`${result.metadata?.file_name}_${result.metadata?.page_num}_${index}`"
+            class="result-item"
+            @click="handleResultClick(result)"
+          >
+            <div class="result-header">
+              <span class="result-score">相似度: {{ formatScore(result.score) }}</span>
+              <span class="result-meta">
+                {{ result.metadata?.file_name || '未知文件' }} - 
+                第 {{ result.metadata?.page_num || '?' }} 页
+              </span>
+            </div>
           <div class="result-content" v-html="highlightKeywords(result.content, searchQuery)">
           </div>
           <div class="result-footer">
@@ -519,26 +529,6 @@ const highlightKeywords = (text, query) => {
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
-.result-item.other-file {
-  border-left: 3px solid #f59e0b;
-  background: #fffbeb;
-}
-
-.result-item.other-file:hover {
-  background: #fef3c7;
-  border-color: #f59e0b;
-}
-
-.other-file-badge {
-  display: inline-block;
-  margin-left: 0.5rem;
-  padding: 0.125rem 0.5rem;
-  background: #fbbf24;
-  color: white;
-  border-radius: 3px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
 
 .result-header {
   display: flex;
