@@ -10,13 +10,11 @@ const svgRef = ref(null)
 const selected = ref(null)
 const isFullscreen = ref(false)
 
-// 视图状态
 const pan = ref({x: 100, y: 100})
 const zoom = ref(0.9)
 const isPanning = ref(false)
 const lastPos = ref({x: 0, y: 0})
 
-// 布局参数
 const CONFIG = {
   nodeHeight: 40,
   levelGap: 240,
@@ -25,8 +23,7 @@ const CONFIG = {
   padding: 20
 }
 
-// --- 布局引擎 ---
-// 1. 计算每个节点所需的垂直空间和宽度
+
 function computeMetrics(node) {
   const labelWidth = Math.max(100, (node.label?.length || 0) * CONFIG.charWidth + 30)
   node._width = labelWidth
@@ -41,13 +38,11 @@ function computeMetrics(node) {
     computeMetrics(child)
     childrenHeight += child._areaHeight + CONFIG.siblingGap
   })
-  // 减去最后一个多余的间隔
   childrenHeight -= CONFIG.siblingGap
 
   node._areaHeight = Math.max(CONFIG.nodeHeight, childrenHeight)
 }
 
-// 2. 分配坐标 (X 轴按层级，Y 轴按子树居中)
 function assignCoords(node, x, yStart) {
   const xPos = x
   const yPos = yStart + node._areaHeight / 2
@@ -69,7 +64,6 @@ const layout = computed(() => {
 
   const rootCopy = JSON.parse(JSON.stringify(props.root))
 
-  // 执行布局计算
   computeMetrics(rootCopy)
   assignCoords(rootCopy, 50, 50)
 
@@ -94,7 +88,6 @@ const layout = computed(() => {
   return {nodes, edges}
 })
 
-// --- 交互逻辑 ---
 const onWheel = (e) => {
   e.preventDefault()
   const delta = e.deltaY > 0 ? -0.05 : 0.05
@@ -103,7 +96,7 @@ const onWheel = (e) => {
 }
 
 const startPan = (e) => {
-  // 检查是否点击在按钮、工具栏或节点上
+
   const target = e.target
   if (target.closest('.toolbar') || target.closest('.toolbar-btn') || 
       target.closest('.node-group') || target.closest('.detail-panel')) {
@@ -133,7 +126,6 @@ const endPan = (e) => {
   isPanning.value = false
 }
 
-// 初始化视图位置
 watch(() => props.root, () => {
   selected.value = null
   pan.value = {x: 80, y: window.innerHeight / 3}
@@ -143,7 +135,6 @@ watch(() => props.root, () => {
 onMounted(() => {
   containerRef.value?.addEventListener('wheel', onWheel, {passive: false})
   
-  // 监听全屏变化
   document.addEventListener('fullscreenchange', handleFullscreenChange)
   document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
   document.addEventListener('mozfullscreenchange', handleFullscreenChange)
@@ -151,7 +142,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  // 清理事件监听器
   containerRef.value?.removeEventListener('wheel', onWheel)
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
   document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
@@ -159,7 +149,6 @@ onUnmounted(() => {
   document.removeEventListener('MSFullscreenChange', handleFullscreenChange)
 })
 
-// 全屏相关函数
 const handleFullscreenChange = () => {
   isFullscreen.value = !!(
     document.fullscreenElement ||
@@ -174,7 +163,6 @@ const toggleFullscreen = async () => {
   
   try {
     if (!isFullscreen.value) {
-      // 进入全屏
       if (containerRef.value.requestFullscreen) {
         await containerRef.value.requestFullscreen()
       } else if (containerRef.value.webkitRequestFullscreen) {
@@ -185,7 +173,6 @@ const toggleFullscreen = async () => {
         await containerRef.value.msRequestFullscreen()
       }
     } else {
-      // 退出全屏
       if (document.exitFullscreen) {
         await document.exitFullscreen()
       } else if (document.webkitExitFullscreen) {
@@ -201,12 +188,10 @@ const toggleFullscreen = async () => {
   }
 }
 
-// 导出功能
 const exportAsSVG = () => {
   if (!svgRef.value || !layout.value.nodes.length) return
   
   try {
-    // 计算边界框
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
     layout.value.nodes.forEach(node => {
       const x = node._x
@@ -222,20 +207,17 @@ const exportAsSVG = () => {
     const svgWidth = maxX - minX + padding * 2
     const svgHeight = maxY - minY + padding * 2
     
-    // 创建新的SVG元素
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.setAttribute('width', svgWidth.toString())
     svg.setAttribute('height', svgHeight.toString())
     svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
     
-    // 添加背景
     const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
     bg.setAttribute('width', '100%')
     bg.setAttribute('height', '100%')
     bg.setAttribute('fill', '#fcfcfd')
     svg.appendChild(bg)
     
-    // 添加defs（阴影效果）
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
     const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter')
     filter.setAttribute('id', 'nodeShadow')
@@ -252,7 +234,6 @@ const exportAsSVG = () => {
     defs.appendChild(filter)
     svg.appendChild(defs)
     
-    // 添加连线
     layout.value.edges.forEach(edge => {
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
       const x1 = edge.x1 - minX + padding
@@ -267,7 +248,6 @@ const exportAsSVG = () => {
       svg.appendChild(path)
     })
     
-    // 添加节点
     layout.value.nodes.forEach(node => {
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
       const x = node._x - minX + padding
@@ -296,7 +276,6 @@ const exportAsSVG = () => {
       svg.appendChild(g)
     })
     
-    // 序列化并下载
     const svgData = new XMLSerializer().serializeToString(svg)
     const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
     const svgUrl = URL.createObjectURL(svgBlob)
@@ -318,7 +297,6 @@ const exportAsPNG = async () => {
   if (!svgRef.value || !layout.value.nodes.length) return
   
   try {
-    // 计算边界框
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
     layout.value.nodes.forEach(node => {
       const x = node._x
@@ -334,7 +312,7 @@ const exportAsPNG = async () => {
     const svgWidth = maxX - minX + padding * 2
     const svgHeight = maxY - minY + padding * 2
     
-    // 创建SVG字符串（与exportAsSVG相同的逻辑）
+
     let svgString = `<svg width="${svgWidth}" height="${svgHeight}" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <filter id="nodeShadow" x="-20%" y="-20%" width="140%" height="140%">
@@ -344,7 +322,6 @@ const exportAsPNG = async () => {
       <rect width="100%" height="100%" fill="#fcfcfd"/>
     `
     
-    // 添加连线
     layout.value.edges.forEach(edge => {
       const x1 = edge.x1 - minX + padding
       const y1 = edge.y1 - minY + padding
@@ -354,7 +331,6 @@ const exportAsPNG = async () => {
       svgString += `<path d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" fill="none" stroke="#cbd5e1" stroke-width="1.5"/>`
     })
     
-    // 添加节点
     layout.value.nodes.forEach(node => {
       const x = node._x - minX + padding
       const y = node._y - minY + padding
@@ -367,7 +343,6 @@ const exportAsPNG = async () => {
     
     svgString += '</svg>'
     
-    // 创建图片并转换为PNG
     const img = new Image()
     const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
     const url = URL.createObjectURL(svgBlob)
@@ -379,14 +354,13 @@ const exportAsPNG = async () => {
         canvas.height = svgHeight
         const ctx = canvas.getContext('2d')
         
-        // 设置白色背景
         ctx.fillStyle = '#fcfcfd'
         ctx.fillRect(0, 0, canvas.width, canvas.height)
         
         ctx.drawImage(img, 0, 0)
         URL.revokeObjectURL(url)
         
-        // 下载PNG
+
         canvas.toBlob((blob) => {
           if (!blob) {
             reject(new Error('无法创建PNG blob'))
@@ -444,11 +418,9 @@ const exportAsPNG = async () => {
       </defs>
 
       <g :transform="`translate(${pan.x}, ${pan.y}) scale(${zoom})`">
-        <!-- 连线 (贝塞尔曲线) -->
         <path v-for="edge in layout.edges" :key="edge.id" class="edge-line"
               :d="`M ${edge.x1} ${edge.y1} C ${(edge.x1 + edge.x2)/2} ${edge.y1}, ${(edge.x1 + edge.x2)/2} ${edge.y2}, ${edge.x2} ${edge.y2}`"/>
 
-        <!-- 节点 -->
         <g v-for="node in layout.nodes" :key="node.id"
            class="node-group" :class="{ 'is-selected': selected?.id === node.id }"
            :transform="`translate(${node._x}, ${node._y - 20})`"
@@ -458,7 +430,6 @@ const exportAsPNG = async () => {
           <rect class="node-card" :width="node._width" height="40" rx="8"/>
           <text class="node-label" :x="15" :y="25">{{ node.label }}</text>
 
-          <!-- 类型小标记 -->
           <circle v-if="node.meta?.kind === 'slide'" cx="5" cy="20" r="3" fill="#3b82f6"/>
         </g>
       </g>

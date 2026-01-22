@@ -16,12 +16,12 @@ const props = defineProps({
 const currentSlideIndex = ref(0)
 const activeTool = ref('explain')
 const isAnalyzing = ref(false)
-const analysisCache = ref({})  // 缓存分析结果
+const analysisCache = ref({}) 
 const hasPreloaded = ref(false)
-const isAnalyzingGlobal = ref(false)  // 全局分析是否正在进行
-const globalAnalysisResult = ref(null)  // 全局分析结果
-const isExporting = ref(false)  // 导出是否正在进行
-const showExportOptions = ref(false)  // 是否显示导出选项弹窗
+const isAnalyzingGlobal = ref(false)  
+const globalAnalysisResult = ref(null)  
+const isExporting = ref(false)  
+const showExportOptions = ref(false)  
 
 const currentSlide = computed(() => props.slides[currentSlideIndex.value])
 
@@ -54,7 +54,7 @@ watch(
   { immediate: true }
 )
 
-// 将 Markdown 转换为 HTML（简单版本）
+// 将 Markdown 转换为 HTML
 const markdownToHtml = (markdown) => {
   if (!markdown) return ''
   return markdown
@@ -68,7 +68,6 @@ const markdownToHtml = (markdown) => {
     .replace(/\n/g, '<br>')
 }
 
-// 分析页面
 const analyzeCurrentPage = async () => {
   if (!currentSlide.value) {
     console.warn('⚠️ currentSlide 为空，无法分析')
@@ -113,7 +112,6 @@ const analyzeCurrentPage = async () => {
     if (analysisRes.data?.data) {
       analysisData = analysisRes.data.data
     } else if (analysisRes.data?.success) {
-      // 可能返回的是其他格式
       analysisData = analysisRes.data
     }
     
@@ -147,9 +145,7 @@ const analyzeCurrentPage = async () => {
     Object.assign(currentSlide.value, enrichedSlide)
     console.log('💾 分析结果已缓存')
 
-    // 4. 初始化助教（如果批量设置已完成，则跳过单独设置）
-    // 注意：批量设置应该在 preloadCachedAnalyses 中完成
-    // 这里只在批量设置未完成时才单独设置
+    // 4. 初始化助教
     if (!hasPreloaded.value) {
       try {
         console.log('🤖 初始化 AI 助教 (页面 ' + pageId + ') - 批量设置未完成，单独设置')
@@ -168,7 +164,6 @@ const analyzeCurrentPage = async () => {
     }
   } catch (error) {
     console.error('❌ 页面分析失败:', error)
-    // 显示错误信息
     if (currentSlide.value) {
       currentSlide.value.deep_analysis = `❌ 分析失败: ${error.message || '未知错误'}`
       currentSlide.value.deep_analysis_html = `<div style="color: red; padding: 1rem; background: #ffe0e0; border-radius: 4px;"><strong>分析错误：</strong><br>${error.message || '未知错误'}</div>`
@@ -185,10 +180,8 @@ const selectSlide = async (index) => {
   // 已缓存则直接使用
   if (analysisCache.value[pageId]) {
     const cached = analysisCache.value[pageId]
-    // 确保所有字段都被正确设置
     Object.assign(props.slides[index], {
       ...cached,
-      // 确保 deep_analysis 和 understanding_notes 都有值
       deep_analysis: cached.deep_analysis || cached.understanding_notes || '',
       understanding_notes: cached.understanding_notes || cached.deep_analysis || '',
       deep_analysis_html: cached.deep_analysis_html || (cached.deep_analysis || cached.understanding_notes ? markdownToHtml(cached.deep_analysis || cached.understanding_notes || '') : '')
@@ -203,12 +196,9 @@ const selectSlide = async (index) => {
     return
   }
 
-  // 新页面加载，不自动分析，等待用户点击按钮
   console.log('📄 加载页面 ' + pageId + '，等待用户决定是否进行 AI 分析')
 }
 
-// 注：跨文档预览功能已在 SemanticSearch 组件内部实现
-// 不再需要 handleLoadDocument 函数
 
 const preloadCachedAnalyses = async () => {
   if (!props.docId) {
@@ -217,7 +207,7 @@ const preloadCachedAnalyses = async () => {
   }
   console.log('📦 开始预加载缓存分析，docId:', props.docId, 'slides数量:', props.slides?.length)
   try {
-    // 步骤1: 先进行全局分析（如果还没有）
+    // 步骤1: 先进行全局分析
     console.log('🌐 开始全局文档分析...')
     try {
       const globalRes = await pptApi.analyzeDocumentGlobal(props.docId)
@@ -234,7 +224,6 @@ const preloadCachedAnalyses = async () => {
       }
     } catch (globalErr) {
       console.warn('⚠️ 全局分析失败（非致命错误）:', globalErr.message)
-      // 全局分析失败不影响后续流程
     }
     
     // 步骤2: 获取已保存的页面分析
@@ -246,15 +235,13 @@ const preloadCachedAnalyses = async () => {
       const pageId = Number(pageStr)
       const slideIdx = pageId - 1
       if (!props.slides[slideIdx]) return
-      
-      // 确保 understanding_notes 被正确映射到 deep_analysis
+
       const understandingNotes = ana?.understanding_notes || ana?.deep_analysis || ''
       const deepAnalysis = ana?.deep_analysis || understandingNotes || ''
       
       const enriched = {
         ...props.slides[slideIdx],
         ...(ana || {}),
-        // 确保两个字段都有值
         understanding_notes: understandingNotes,
         deep_analysis: deepAnalysis,
         deep_analysis_html: deepAnalysis ? markdownToHtml(deepAnalysis) : '',
@@ -279,7 +266,7 @@ const preloadCachedAnalyses = async () => {
       console.log('✅ 已预加载历史分析页:', Object.keys(data))
     }
     
-    // 预先为所有页设置助教上下文（无论是否有分析结果）
+    // 预先为所有页设置助教上下文
     console.log('🤖 开始批量设置助教上下文，docId:', props.docId)
     try {
       const bulkRes = await pptApi.setTutorContextBulk(props.docId)
@@ -291,7 +278,6 @@ const preloadCachedAnalyses = async () => {
   } catch (err) {
     console.error('❌ 预加载历史分析失败:', err)
     console.error('错误详情:', err.response?.data || err.message)
-    // 即使获取分析失败，也尝试批量设置上下文（使用原始 slides 数据）
     console.log('🔄 尝试仅批量设置上下文（无分析数据）...')
     try {
       const bulkRes = await pptApi.setTutorContextBulk(props.docId)
@@ -306,7 +292,6 @@ const handleToolChange = (toolName) => {
   activeTool.value = toolName
 }
 
-// 触发全局分析
 const triggerGlobalAnalysis = async (force = false) => {
   if (!props.docId) {
     console.warn('⚠️ docId 为空，无法进行全局分析')
@@ -326,8 +311,7 @@ const triggerGlobalAnalysis = async (force = false) => {
         knowledge_units: res.data.global_analysis?.knowledge_units?.length || 0,
         cached: res.data.cached
       })
-      
-      // 显示成功提示
+ 
       if (force) {
         alert(`✅ 全局分析重新完成！\n主题: ${res.data.global_analysis?.main_topic || '未知'}\n知识点单元: ${res.data.global_analysis?.knowledge_units?.length || 0} 个`)
       } else {
@@ -346,7 +330,6 @@ const triggerGlobalAnalysis = async (force = false) => {
   }
 }
 
-// 导出AI分析内容
 const exportAnalysis = async (options = {}) => {
   if (!props.docId) {
     alert('❌ 无法导出：未找到文档ID')
@@ -368,18 +351,15 @@ const exportAnalysis = async (options = {}) => {
       dataSize: response.data?.size || response.data?.length,
       headers: response.headers
     })
-    
-    // 创建下载链接
+
     const blob = new Blob([response.data], { type: 'text/markdown; charset=utf-8' })
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    
-    // 从响应头获取文件名，如果没有则使用默认名称
+
     const contentDisposition = response.headers['content-disposition']
     let fileName = 'AI分析内容.md'
     if (contentDisposition) {
-      // 支持 RFC 5987 格式 (filename*=UTF-8''encoded-name)
       const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''(.+)/)
       if (rfc5987Match && rfc5987Match[1]) {
         fileName = decodeURIComponent(rfc5987Match[1])
@@ -406,12 +386,10 @@ const exportAnalysis = async (options = {}) => {
       status: err.response?.status,
       data: err.response?.data
     })
-    
-    // 尝试解析错误信息
+
     let errorMsg = '未知错误'
     if (err.response?.data) {
       if (err.response.data instanceof Blob) {
-        // 如果是Blob，尝试读取文本
         try {
           const text = await err.response.data.text()
           const json = JSON.parse(text)
@@ -435,7 +413,6 @@ const exportAnalysis = async (options = {}) => {
   }
 }
 
-// 快速导出（完整版）
 const quickExportFull = () => {
   exportAnalysis({
     includeGlobal: true,
@@ -445,7 +422,6 @@ const quickExportFull = () => {
   })
 }
 
-// 快速导出（摘要版）
 const quickExportSummary = () => {
   exportAnalysis({
     includeGlobal: true,
@@ -455,7 +431,6 @@ const quickExportSummary = () => {
   })
 }
 
-// 切换导出选项弹窗
 const toggleExportOptions = () => {
   showExportOptions.value = !showExportOptions.value
 }
@@ -583,7 +558,6 @@ const toggleExportOptions = () => {
   overflow: hidden;
 }
 
-/* 假设你使用了 Tab 切换或者分栏，确保导图容器撑满 */
 .graph-wrapper {
   flex: 1;
   height: 100%;

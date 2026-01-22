@@ -18,7 +18,6 @@ const docId = ref('');
 // 上传处理
 const handleFileUpload = async (file) => {
   if (!file) {
-    // 如果没有文件（例如点击了Mock按钮），则使用演示模式
     fileName.value = "深度学习架构分析.pptx";
     simulateMockData();
     return;
@@ -102,7 +101,7 @@ const simulateMockData = async () => {
       }
     ];
     
-    appState.value = 'workspace';  // 立即进入工作台
+    appState.value = 'workspace'; 
     isLoading.value = false;
     
     // 异步生成思维导图
@@ -116,7 +115,6 @@ const buildMindmapForDeck = async () => {
     mindmapError.value = '';
 
     try {
-      // 先尝试获取全局分析结果（如果不存在则自动触发分析）
       const analysisRes = await pptApi.analyzeDocumentGlobal(docId.value, false);
       if (analysisRes.data?.success && analysisRes.data?.global_analysis) {
         // 使用全局分析结果生成思维导图
@@ -126,7 +124,7 @@ const buildMindmapForDeck = async () => {
           6,
           25
         );
-        mindmapData.value = res.data;  // 保持完整响应格式 {root: {...}}
+        mindmapData.value = res.data;  
       } else {
         // 如果没有全局分析结果，回退到基于slides的方式
         console.warn('全局分析结果不可用，回退到基于slides的思维导图生成');
@@ -170,7 +168,7 @@ const buildMindmapFromSlides = async () => {
 
   try {
     const res = await pptApi.mindmapFromSlides(payload);
-    mindmapData.value = res.data;  // 保持完整响应格式 {root: {...}}
+    mindmapData.value = res.data;  
   } catch (err) {
     console.error('思维导图生成失败', err);
     mindmapError.value = err.response?.data?.detail || err.message || '生成失败';

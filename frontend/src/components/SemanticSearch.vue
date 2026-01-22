@@ -22,20 +22,17 @@ const previewDialog = ref({
 
 const hasResults = computed(() => searchResults.value.length > 0)
 
-// 提取文件名的基础名称（去掉路径）
+// 提取文件名的基础名称
 const getBaseFileName = (fileName) => {
   if (!fileName) return ''
-  // 去掉路径，只保留文件名
   const baseName = fileName.split(/[/\\]/).pop() || fileName
   return baseName.trim()
 }
 
-// 检查结果是否来自当前文件
 const isCurrentFile = (result) => {
   const resultFileName = result.metadata?.file_name
   const currentFileName = props.currentFileName
-  
-  // 如果任一为空，返回false
+
   if (!resultFileName || !currentFileName) {
     if (import.meta.env.DEV) {
       console.log('🔍 文件匹配检查 - 缺少文件名:', {
@@ -46,14 +43,12 @@ const isCurrentFile = (result) => {
     return false
   }
   
-  // 提取基础文件名（去掉路径）
+  // 提取基础文件名
   const resultBase = getBaseFileName(resultFileName)
   const currentBase = getBaseFileName(currentFileName)
-  
-  // 精确匹配（去除前后空格）
+
   const match = resultBase === currentBase
-  
-  // 调试信息（开发环境）
+
   if (import.meta.env.DEV) {
     if (!match) {
       console.log('🔍 文件不匹配:', {
@@ -92,10 +87,10 @@ const performSearch = async () => {
     
     const response = await pptApi.searchSemantic(
       searchQuery.value,
-      10, // top_k - 改为10个结果
+      10, // top_k 
       null, // 不过滤文件，搜索所有文档，然后前端排序
       null, // file_type
-      0.0 // min_score - 降低到0，获取所有结果，前端再过滤
+      0.0 //获取所有结果，前端再过滤
     )
 
     if (response.data.success) {
@@ -103,7 +98,7 @@ const performSearch = async () => {
       
       console.log('📊 原始搜索结果:', results.length, '个')
       
-      // 过滤掉第一页的结果（通常是封面页，不包含实际内容）
+      // 过滤掉第一页的结果
       results = results.filter(r => {
         const pageNum = r.metadata?.page_num
         if (pageNum === 1 || pageNum === 0) {
@@ -126,11 +121,10 @@ const performSearch = async () => {
       console.log('📂 当前文件结果:', currentFileResults.length, '个')
       console.log('📁 其他文件结果:', otherFileResults.length, '个')
       
-      // 当前文件结果排在前面，其他文件结果排在后面
+      // 当前文件结果排在前面
       searchResults.value = [...currentFileResults, ...otherFileResults]
       showResults.value = true
       
-      // 如果当前文件没有结果，提示
       if (currentFileResults.length === 0 && props.currentFileName) {
         console.warn('⚠️ 当前文件没有匹配结果，只显示其他文件的结果')
       }
@@ -165,7 +159,6 @@ const formatScore = (score) => {
 const handleResultClick = async (result) => {
   // 检查是否来自其他文件
   if (!isCurrentFile(result)) {
-    // 来自其他PPT，显示该页面的预览
     const fileName = result.metadata?.file_name
     const pageNum = result.metadata?.page_num
     
@@ -174,9 +167,8 @@ const handleResultClick = async (result) => {
       await showPreview(result)
     }
   } else {
-    // 当前文件，直接跳转到对应页面
     if (result.metadata && result.metadata.page_num) {
-      emit('select-slide', result.metadata.page_num - 1) // 转换为 0-based 索引
+      emit('select-slide', result.metadata.page_num - 1) 
     }
   }
 }
@@ -191,13 +183,11 @@ const showPreview = async (result) => {
   try {
     const fileName = result.metadata?.file_name
     const pageNum = result.metadata?.page_num
-    
-    // 获取该文档的数据
+
     const response = await pptApi.getDocumentByName(fileName)
     
     if (response.data.success && response.data.slides) {
       const slides = response.data.slides
-      // 找到对应的页面
       const slide = slides.find(s => s.page_num === pageNum)
       
       if (slide) {
@@ -219,25 +209,23 @@ const closePreview = () => {
   previewDialog.value.slideData = null
 }
 
-// 高亮关键词
 const highlightKeywords = (text, query) => {
   if (!text || !query) return text
   
   let highlightedText = text
   const queryTrimmed = query.trim()
   
-  // 首先尝试完整查询匹配（对中文很重要）
+  // 首先尝试完整查询匹配
   if (queryTrimmed.length >= 2) {
-    // 转义特殊字符
     const escapedQuery = queryTrimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const regex = new RegExp(`(${escapedQuery})`, 'gi')
     highlightedText = highlightedText.replace(regex, '<mark>$1</mark>')
   }
   
-  // 然后处理空格分割的关键词（英文查询）
+  // 然后处理空格分割的关键词
   const keywords = queryTrimmed.split(/\s+/)
   keywords.forEach(keyword => {
-    if (keyword.length < 2 || keyword === queryTrimmed) return // 跳过太短的词或已处理的完整查询
+    if (keyword.length < 2 || keyword === queryTrimmed) return 
     
     // 转义特殊字符
     const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -245,12 +233,9 @@ const highlightKeywords = (text, query) => {
     highlightedText = highlightedText.replace(regex, '<mark>$1</mark>')
   })
   
-  // 截取前200字符（避免显示太多内容）
   if (highlightedText.length > 200) {
-    // 尝试找到第一个高亮词的位置，从那里开始截取
     const markIndex = highlightedText.indexOf('<mark>')
     if (markIndex > 50) {
-      // 从高亮词前50个字符开始
       highlightedText = '...' + highlightedText.substring(markIndex - 50, markIndex + 200) + '...'
     } else {
       highlightedText = highlightedText.substring(0, 200) + '...'

@@ -11,29 +11,25 @@ const props = defineProps({
   mindmap: Object,
   mindmapLoading: Boolean,
   mindmapError: String,
-  isAnalyzing: Boolean,  // 新增：是否正在分析
+  isAnalyzing: Boolean,  
   docId: String
 })
 
 const emit = defineEmits(['select-slide', 'load-document'])
 
-// Chat 相关
 const chatMessages = ref([])
 const userChatInput = ref('')
 const isChatting = ref(false)
 const messagesContainer = ref(null)
 const isInitializingChat = ref(false)
 
-// 关键词提取相关
 const isLoadingKeywords = ref(false)
 
-// Search 相关
 const searchQuery = ref('')
 const isSearching = ref(false)
 const searchResults = ref([])
 const searchType = ref('all')
 
-// AI 分析阶段追踪
 const analysisStages = ref({
   clustering: { name: '知识聚类', completed: false, message: '' },
   understanding: { name: '生成学习笔记', completed: false, message: '' },
@@ -43,84 +39,62 @@ const analysisStages = ref({
   complete: { name: '分析完成', completed: false, message: '' }
 })
 
-// AI 分析控制
-const shouldShowAIAnalysis = ref(false)  // 控制是否显示AI分析卡片
-const isAnalyzingPage = ref(false)  // 追踪AI分析是否正在进行中
+const shouldShowAIAnalysis = ref(false)  
+const isAnalyzingPage = ref(false)  
 
-// Markdown 转 HTML 工具函数
 const markdownToHtml = (markdown) => {
   if (!markdown) return ''
   
   let html = markdown
   
-  // 处理代码块（先处理，避免被其他规则影响）
   html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
   
-  // 处理标题（按顺序从大到小）
   html = html.replace(/^#### (.*)$/gm, '<h4>$1</h4>')
   html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>')
   html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>')
   html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>')
   
-  // 处理粗斜体（***text***）必须在粗体和斜体之前
   html = html.replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
   
-  // 处理粗体（**text**）
   html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
   
-  // 处理斜体（*text*），但要避免匹配列表项
   html = html.replace(/(?<!\n)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>')
   
-  // 处理删除线
   html = html.replace(/~~(.*?)~~/g, '<del>$1</del>')
   
-  // 处理引用块
   html = html.replace(/^> (.*)$/gm, '<blockquote>$1</blockquote>')
   
-  // 处理无序列表
   html = html.replace(/^[\*\-\+] (.+)$/gm, '<li>$1</li>')
-  // 将连续的<li>包裹在<ul>中
   html = html.replace(/(<li>.*<\/li>)(?=\s*<li>|$)/gs, (match) => {
-    // 检查是否已经被包裹
     if (match.includes('<ul>')) return match
     return '<ul>' + match + '</ul>'
   })
   
-  // 处理有序列表
   html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-  // 将连续的有序列表项包裹在<ol>中（简化处理）
   
-  // 处理水平线
   html = html.replace(/^---$/gm, '<hr>')
   html = html.replace(/^\*\*\*$/gm, '<hr>')
   
-  // 处理换行：将双换行转换为段落分隔
   html = html.split('\n\n').map(para => {
-    // 如果段落已经是HTML标签，直接返回
     if (para.match(/^<[h|u|o|p|b|d|h]/)) {
       return para
     }
-    // 否则包裹在<p>标签中
     para = para.trim()
     if (!para) return ''
     return '<p>' + para + '</p>'
   }).join('')
   
-  // 处理单换行（在段落内）
   html = html.replace(/\n/g, '<br>')
   
   return html
 }
 
 
-
 // 监听 slide 变化，重置 AI 分析状态
 watch(() => props.slide?.page_num, () => {
   shouldShowAIAnalysis.value = false
 })
-
-const initChat = async () => {
   if (!props.slide?.page_num) {
     console.warn('⚠️ 无法初始化聊天：页面信息缺失')
     return
@@ -131,7 +105,6 @@ const initChat = async () => {
   try {
     isInitializingChat.value = true
     
-    // 1. 设置助教上下文（后端会自动检查是否已存在，如果存在则跳过）
     console.log('📞 调用单页设置上下文接口，page_id:', props.slide.page_num)
     const contextResponse = await pptApi.setTutorContext(
       props.slide.page_num,
@@ -147,7 +120,6 @@ const initChat = async () => {
       console.log('⚠️ 上下文不存在，已单独设置:', contextResponse.data?.message)
     }
     
-    // 2. 初始化消息（使用后端返回的欢迎语）
     const greeting = contextResponse.data?.greeting || 
                      contextResponse.data?.data?.greeting ||
                      `你好!我是基于当前 PPT 的助教。关于 "${props.slide.title}" 你有什么疑问吗？`
@@ -177,11 +149,9 @@ const initChat = async () => {
   }
 }
 
-// 触发 AI 分析
 const triggerAIAnalysis = async (force = false) => {
   if (!props.slide?.page_num) return
   
-  // 确保 force 是布尔值
   force = Boolean(force)
   
   console.log('🎯 triggerAIAnalysis 被调用:', { 
@@ -193,29 +163,22 @@ const triggerAIAnalysis = async (force = false) => {
   
   shouldShowAIAnalysis.value = true
   
-  // 如果是强制重新分析，清除现有结果并重新分析
   if (force) {
     console.log('🔄 用户触发强制重新分析，页面 ' + props.slide.page_num)
-    // 清除现有分析结果
     props.slide.deep_analysis = ''
     props.slide.deep_analysis_html = ''
     props.slide.knowledge_clusters = []
     props.slide.knowledge_gaps = []
     props.slide.expanded_content = []
     props.slide.references = []
-    // 重置分析阶段状态
     Object.keys(analysisStages.value).forEach(stage => {
       analysisStages.value[stage].completed = false
       analysisStages.value[stage].message = ''
     })
-    // 重新分析
     analyzePageWithAI(true)
     return
   }
   
-  // 检查是否有分析结果（检查多个可能的字段）
-  // 先尝试从 slide 对象中获取数据
-  // 注意：直接使用 props.slide，不要创建新对象，以保持响应式
   const slide = props.slide
   
   if (!slide) {
@@ -223,8 +186,6 @@ const triggerAIAnalysis = async (force = false) => {
     return
   }
   
-  // 如果 docId 存在，先尝试从后端获取缓存（如果前端数据不完整）
-  // 这样可以确保即使前端数据没有正确加载，也能从后端获取缓存
   if (props.docId && slide.page_num) {
     console.log('🔍 有 docId，先尝试从后端获取缓存（确保数据完整性）...')
     try {
@@ -239,10 +200,8 @@ const triggerAIAnalysis = async (force = false) => {
       })
       if (cachedData && (cachedData.understanding_notes || cachedData.deep_analysis)) {
         console.log('✅ 从后端获取到缓存分析结果，合并到 slide 对象')
-        // 将缓存数据合并到 slide 对象
         const understandingNotes = cachedData.understanding_notes || cachedData.deep_analysis || ''
         const deepAnalysis = cachedData.deep_analysis || understandingNotes || ''
-        // 直接修改 props.slide 的属性，保持响应式
         Object.assign(slide, {
           ...cachedData,
           understanding_notes: understandingNotes,
@@ -266,22 +225,17 @@ const triggerAIAnalysis = async (force = false) => {
     }
   }
   
-  // 如果 docId 存在，先尝试从后端获取缓存（如果前端数据不完整）
-  // 但这里先检查前端数据，如果前端有数据就不需要调用后端
   const deepAnalysis = slide.deep_analysis || slide.understanding_notes || ''
   const hasDeepAnalysis = deepAnalysis && 
                           typeof deepAnalysis === 'string' &&
                           !deepAnalysis.includes('❌') &&
                           deepAnalysis.trim().length > 0
   
-  // 检查是否有其他分析数据（知识聚类、知识缺口等）
   const hasOtherAnalysis = (slide.knowledge_clusters && Array.isArray(slide.knowledge_clusters) && slide.knowledge_clusters.length > 0) ||
                           (slide.knowledge_gaps && Array.isArray(slide.knowledge_gaps) && slide.knowledge_gaps.length > 0) ||
                           (slide.expanded_content && Array.isArray(slide.expanded_content) && slide.expanded_content.length > 0) ||
                           (slide.references && Array.isArray(slide.references) && slide.references.length > 0)
   
-  // 如果前端没有数据，但有 docId，说明可能有缓存但前端还没加载
-  // 这种情况下，让后端检查缓存，如果后端有缓存会直接返回
   const hasAnalysis = hasDeepAnalysis || hasOtherAnalysis
   
   console.log('🔍 检查分析结果:', {
@@ -300,15 +254,12 @@ const triggerAIAnalysis = async (force = false) => {
     docId: props.docId
   })
   
-  // 先检查前端是否有分析结果
   if (hasAnalysis) {
     console.log('✅ 已有分析结果，直接显示，不重新分析')
-    // 如果只有 understanding_notes 但没有 deep_analysis，需要转换
     if (slide.understanding_notes && !slide.deep_analysis) {
       slide.deep_analysis = slide.understanding_notes
       slide.deep_analysis_html = markdownToHtml(slide.understanding_notes)
     }
-    // 确保分析阶段状态显示为已完成
     Object.keys(analysisStages.value).forEach(stage => {
       if (stage === 'complete') {
         analysisStages.value[stage].completed = true
@@ -318,8 +269,6 @@ const triggerAIAnalysis = async (force = false) => {
     return
   }
   
-  // 如果前端没有检测到分析结果，但有 docId，先尝试从后端获取缓存
-  // 这样可以避免不必要的重新分析（这里应该不会执行，因为上面已经检查过了）
   if (!hasAnalysis && props.docId && slide.page_num) {
     console.log('🔍 前端未检测到分析结果，但有 docId，尝试从后端获取缓存...')
     try {
@@ -363,18 +312,13 @@ const triggerAIAnalysis = async (force = false) => {
   
   console.log('⚠️ 未检测到分析结果，将调用 API 进行分析（force=false，后端会检查缓存）')
   
-  // 如果没有分析结果，异步触发分析（不阻塞UI）
-  // 注意：这里传递 force=false，后端会检查缓存
   console.log('🤖 用户触发了 AI 分析，开始分析页面 ' + props.slide.page_num + ' (force=false)')
-  // 不使用 await，让分析在后台进行，不阻塞 UI
   analyzePageWithAI(false)
 }
 
-// AI 分析函数（后台异步执行，不阻塞UI）
 const analyzePageWithAI = async (force = false) => {
   const pageId = props.slide.page_num || 1
   
-  // 确保 force 是布尔值
   force = Boolean(force)
   
   console.log('🚀 analyzePageWithAI 被调用:', { 
@@ -390,7 +334,6 @@ const analyzePageWithAI = async (force = false) => {
   try {
     isAnalyzingPage.value = true
     
-    // 重置分析阶段状态
     Object.keys(analysisStages.value).forEach(stage => {
       analysisStages.value[stage].completed = false
       analysisStages.value[stage].message = ''
@@ -403,7 +346,6 @@ const analyzePageWithAI = async (force = false) => {
       force: force ? '(强制重新分析)' : '(正常分析，会检查缓存)'
     })
     
-    // 初始化分析数据容器
     let analysisData = {
       knowledge_clusters: [],
       understanding_notes: '',
@@ -413,7 +355,6 @@ const analyzePageWithAI = async (force = false) => {
       page_structure: {}
     }
     
-    // 使用流式 API
     await pptApi.analyzePageStream(
       pageId,
       props.slide.title || '',
@@ -491,36 +432,29 @@ const analyzePageWithAI = async (force = false) => {
   }
 }
 
-// 更新 slide 对象的分析数据
 const updateSlideWithAnalysis = (analysisData) => {
-  // 更新知识聚类
   if (analysisData.knowledge_clusters !== undefined) {
     props.slide.knowledge_clusters = analysisData.knowledge_clusters || []
   }
   
-  // 更新学习笔记（understanding_notes）
   if (analysisData.understanding_notes !== undefined) {
     const notes = analysisData.understanding_notes || ''
     props.slide.deep_analysis = notes
     props.slide.deep_analysis_html = notes ? markdownToHtml(notes) : ''
   }
   
-  // 更新知识缺口
   if (analysisData.knowledge_gaps !== undefined) {
     props.slide.knowledge_gaps = analysisData.knowledge_gaps || []
   }
   
-  // 更新扩展内容
   if (analysisData.expanded_content !== undefined) {
     props.slide.expanded_content = analysisData.expanded_content || []
   }
   
-  // 更新参考文献
   if (analysisData.references !== undefined) {
     props.slide.references = analysisData.references || []
   }
   
-  // 更新页面结构
   if (analysisData.page_structure !== undefined) {
     props.slide.page_structure = analysisData.page_structure || {}
   }
@@ -556,7 +490,6 @@ const performSearch = async () => {
   }
 }
 
-// 学习目标列表
 const learningObjectives = computed(() => {
   return props.slide?.learning_objectives || []
 })
@@ -573,9 +506,6 @@ const handleSearch = () => {
   }, 1000)
 }
 
-
-
-// 监听 slide 变化，重新初始化聊天
 watch(() => props.slide?.page_num, (newPageNum, oldPageNum) => {
   if (newPageNum !== oldPageNum && newPageNum) {
     initChat()
@@ -601,7 +531,6 @@ const sendChatMessage = async () => {
   const pageId = props.slide.page_num || 1
   const message = userChatInput.value
   
-  // 添加用户消息
   chatMessages.value.push({
     role: 'user',
     content: message,
@@ -611,7 +540,6 @@ const sendChatMessage = async () => {
   userChatInput.value = ''
   isChatting.value = true
   
-  // 滚动到底部
   await nextTick()
   if (messagesContainer.value) {
     messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
@@ -625,13 +553,11 @@ const sendChatMessage = async () => {
                        response.data.data?.response || 
                        'AI 助教暂时无法回答'
     
-    // 检查是否需要重新初始化上下文
     if (response.data.need_context || response.data.status === 'error') {
       console.warn('⚠️ 需要重新初始化上下文或出现错误，尝试重新初始化...')
       // 移除用户消息和AI错误消息，重新初始化
       chatMessages.value = chatMessages.value.slice(0, -1)
       await initChat()
-      // 等待初始化完成后重新发送消息
       await new Promise(resolve => setTimeout(resolve, 500))
       userChatInput.value = message
       await sendChatMessage()
@@ -644,7 +570,6 @@ const sendChatMessage = async () => {
       timestamp: new Date().toISOString()
     })
     
-    // 滚动到底部
     await nextTick()
     if (messagesContainer.value) {
       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
@@ -682,7 +607,6 @@ const loadKeywords = async () => {
     return
   }
   
-  // ⭐ 检查缓存：如果已经提取过关键词，直接使用缓存
   if (props.slide.keywords && Array.isArray(props.slide.keywords) && props.slide.keywords.length > 0) {
     console.log('✅ 关键词缓存存在，使用已提取的关键词:', props.slide.keywords)
     isLoadingKeywords.value = false
@@ -724,32 +648,26 @@ const loadKeywords = async () => {
   }
 }
 
-// 监听 slide 变化，重新初始化聊天
 watch(() => props.slide?.page_num, async (newPageNum, oldPageNum) => {
   if (newPageNum !== oldPageNum && newPageNum) {
     console.log('📄 页面切换:', oldPageNum, '->', newPageNum)
     
-    // 加载关键词
     await loadKeywords()
     
-    // 如果当前在聊天标签，立即初始化
     if (props.activeTool === 'chat') {
       await initChat()
     }
   }
 })
 
-// 监听切换到聊天标签
 watch(() => props.activeTool, async (newTool, oldTool) => {
   if (newTool === 'chat' && oldTool !== 'chat') {
     console.log('💬 切换到聊天标签')
     
-    // 如果还没有消息或消息是空的，初始化
     if (!chatMessages.value.length) {
       await initChat()
     }
     
-    // 滚动到底部
     await nextTick()
     if (messagesContainer.value) {
       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
@@ -757,9 +675,7 @@ watch(() => props.activeTool, async (newTool, oldTool) => {
   }
 })
 
-// 组件挂载时的初始化
 onMounted(async () => {
-  // 加载初始关键词
   await loadKeywords()
   
   if (props.slide?.page_num && props.activeTool === 'chat') {
@@ -767,7 +683,6 @@ onMounted(async () => {
   }
 })
 
-// 格式化时间戳
 const formatTime = (timestamp) => {
   if (!timestamp) return ''
   const date = new Date(timestamp)
@@ -2500,6 +2415,105 @@ const formatTime = (timestamp) => {
   margin: 0.5rem 0;
   color: #64748b;
   font-style: italic;
+eyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.analyzing-spinner {
+  display: inline-block;
+  animation: spin 1.5s linear infinite;
+}
+.chat-view {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 200px);
+  min-height: 500px;
+}
+
+.chat-header {
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #f1f5f9;
+  margin-bottom: 1rem;
+}
+
+.chat-title {
+  font-size: 1.5rem;
+  color: #1e293b;
+  margin: 0 0 0.5rem 0;
+}
+
+.chat-subtitle {
+  font-size: 0.9rem;
+  color: #64748b;
+  margin: 0;
+}
+
+.chat-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  background: #f8fafc;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.message {
+  display: flex;
+  gap: 0.75rem;
+  animation: slideIn 0.3s ease;
+}
+
+.message.user {
+  flex-direction: row-reverse;
+}
+
+.message.ai {
+  flex-direction: row;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.message.user .avatar {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+}
+
+.bubble {
+  background: white;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  max-width: 70%;
+  line-height: 1.6;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  position: relative;
+}
+
+.message.ai .bubble {
+  border-top-left-radius: 2px;
+  background: #f1f5f9;
+}
+
+.message.user .bubble {
+  border-top-right-radius: 2px;
+  background: #3b82f6;
+  color: white;
 }
 
 .timestamp {

@@ -2,11 +2,10 @@ import axios from 'axios'
 
 const service = axios.create({
     baseURL: '/api/v1',
-    timeout: 120000  // 增加到 120 秒，支持 AI 分析可能耗时较长
+    timeout: 120000  
 })
 
 export const pptApi = {
-    // 原有方法
     uploadAndExpand(file) {
         const formData = new FormData()
         formData.append('file', file)
@@ -248,7 +247,7 @@ export const pptApi = {
             page_range: pageRange,
             export_type: exportType
         }, {
-            responseType: 'blob'  // 重要：接收二进制文件
+            responseType: 'blob'  
         })
     },
 

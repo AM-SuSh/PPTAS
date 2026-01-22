@@ -24,13 +24,10 @@ const selectNext = () => {
   emit('select', next)
 }
 
-// 鼠标滚轮切换页面
 let wheelTimeout = null
 const handleWheel = (e) => {
-  // 防止默认滚动行为
   e.preventDefault()
-  
-  // 防抖处理，避免滚动过快
+
   if (wheelTimeout) {
     clearTimeout(wheelTimeout)
   }
@@ -51,7 +48,6 @@ const handleWheel = (e) => {
 const scrollToActiveThumb = () => {
   nextTick(() => {
     if (thumbnailListRef.value && props.currentIndex !== undefined && props.currentIndex >= 0) {
-      // 使用 querySelector 查找激活的缩略图
       const activeThumb = thumbnailListRef.value.querySelector(`.thumb-item:nth-child(${props.currentIndex + 1})`)
       if (activeThumb) {
         activeThumb.scrollIntoView({
@@ -70,11 +66,9 @@ watch(() => props.currentIndex, () => {
 }, { immediate: true })
 
 onMounted(() => {
-  // 在主区域添加滚轮事件监听
   if (mainStageRef.value) {
     mainStageRef.value.addEventListener('wheel', handleWheel, { passive: false })
   }
-  // 初始化时滚动到当前激活的缩略图
   scrollToActiveThumb()
 })
 
