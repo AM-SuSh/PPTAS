@@ -1,4 +1,4 @@
-"""优化后的 PPT 扩展系统 Agent 实现"""
+""" PPT 扩展系统 Agent 实现"""
 
 from typing import List, Dict, Any
 import json
@@ -22,7 +22,6 @@ from .models import (
 )
 
 
-# ==================== 配置管理 ====================
 class LLMConfig:
     """LLM 配置"""
     def __init__(self, api_key: str = "", base_url: str = "", model: str = "gpt-4"):
@@ -40,7 +39,6 @@ class LLMConfig:
         )
 
 
-# ==================== 工具函数 ====================
 def test_url_connectivity(url: str, timeout: int = 3) -> bool:
     """测试URL连通性"""
     try:
@@ -50,16 +48,15 @@ def test_url_connectivity(url: str, timeout: int = 3) -> bool:
         return False
 
 
-# ==================== Step 0-A: 全局结构解析 Agent (简化版) ====================
+# ==================== Step 0-A: 全局结构解析 Agent  ====================
 class GlobalStructureAgent:
-    """全局结构解析 Agent - 提取整体知识框架"""
+    """提取整体知识框架"""
     
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0)
     
     def run(self, state: GraphState) -> GraphState:
         """执行全局结构解析"""
-        # 改进的 prompt: 更明确的要求
         template = """你是一个教育专家，需要分析这份PPT/PDF文档的整体结构和知识框架。
 
 文档内容（共{total_pages}页）:
@@ -92,11 +89,11 @@ class GlobalStructureAgent:
         prompt = ChatPromptTemplate.from_template(template)
         chain = prompt | self.llm
         
-        # 改进：传递更多文本内容，但限制总长度
+        # 传递更多文本内容，但限制总长度
         ppt_texts = state["ppt_texts"]
         total_pages = len(ppt_texts)
         
-        # 如果页数太多，只取前几页和后几页，以及中间几页的摘要
+        # 页数太多时，进行抽样
         if total_pages > 20:
             # 取前5页、后5页，中间每5页取1页
             selected_indices = list(range(min(5, total_pages)))
@@ -109,7 +106,7 @@ class GlobalStructureAgent:
             ])
             ppt_summary += f"\n\n[注：文档共{total_pages}页，此处显示了{len(selected_texts)}页的内容]"
         else:
-            # 页数不多，传递所有内容，但每页限制长度
+            # 页数不多每页限制长度
             ppt_summary = "\n\n".join([
                 f"第{i+1}页:\n{text[:800]}" for i, text in enumerate(ppt_texts)
             ])
@@ -120,9 +117,7 @@ class GlobalStructureAgent:
         print(f"📥 LLM返回的原始内容: {response.content[:500]}...")
         
         try:
-            # 尝试提取JSON（可能包含markdown代码块）
             content = response.content.strip()
-            # 如果包含```json，提取其中的内容
             if "```json" in content:
                 start = content.find("```json") + 7
                 end = content.find("```", start)
@@ -168,14 +163,13 @@ class GlobalStructureAgent:
 
 # ==================== Step 0-B: 知识点划分 Agent (全局视角) ====================
 class KnowledgeClusteringAgent:
-    """知识点划分 Agent - 从全局PPT提取知识单元"""
+    """从全局PPT提取知识单元"""
     
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0.2)
     
     def run(self, state: GraphState) -> GraphState:
         """执行知识点聚类 - 从全局视角"""
-        # 改进的 prompt: 更明确的要求和更好的格式
         global_outline = state.get("global_outline", {})
         main_topic = global_outline.get("main_topic", "未知")
         
@@ -217,12 +211,12 @@ class KnowledgeClusteringAgent:
         prompt = ChatPromptTemplate.from_template(template)
         chain = prompt | self.llm
         
-        # 改进：如果页数太多，使用摘要
+        # 页数太多时，进行抽样
         ppt_texts = state["ppt_texts"]
         total_pages = len(ppt_texts)
         
         if total_pages > 15:
-            # 使用摘要：每页取前500字符
+            # 每页取前500字符
             ppt_summary = "\n\n".join([
                 f"第{i+1}页:\n{text[:500]}..." for i, text in enumerate(ppt_texts)
             ])
@@ -243,9 +237,7 @@ class KnowledgeClusteringAgent:
         print(f"📥 LLM返回的原始内容: {response.content[:500]}...")
         
         try:
-            # 尝试提取JSON
             content = response.content.strip()
-            # 如果包含```json，提取其中的内容
             if "```json" in content:
                 start = content.find("```json") + 7
                 end = content.find("```", start)
@@ -278,13 +270,12 @@ class KnowledgeClusteringAgent:
             
             # 转换为 KnowledgeUnit 格式
             knowledge_units = []
-            for i, concept in enumerate(valid_concepts[:15]):  # 最多15个
+            for i, concept in enumerate(valid_concepts[:15]):  
                 pages = concept.get("pages", [])
-                # 确保页码有效
+                # 过滤无效页码
                 valid_pages = [p for p in pages if isinstance(p, int) and 0 < p <= total_pages]
                 if not valid_pages:
                     # 如果没有有效页码，尝试从概念名称推断
-                    # 这里可以添加更智能的推断逻辑
                     valid_pages = []
                 
                 knowledge_units.append(KnowledgeUnit(
@@ -304,15 +295,15 @@ class KnowledgeClusteringAgent:
         return state
 
 
-# ==================== Step 1: 结构语义理解 Agent (简化) ====================
+# ==================== Step 1: 结构语义理解 Agent  ====================
 class StructureUnderstandingAgent:
-    """结构语义理解 Agent - 生成学生理解笔记"""
+    """生成学生理解笔记"""
     
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0.5)
     
     def run(self, state: GraphState) -> GraphState:
-        """执行结构语义理解和笔记生成（基于全局上下文）"""
+        """基于全局上下文执行结构语义理解和笔记生成"""
         # 检查是否有全局上下文
         has_global_context = state.get("global_outline") and state.get("knowledge_units")
         
@@ -395,10 +386,8 @@ class StructureUnderstandingAgent:
             
             response = chain.invoke({"raw_text": state["raw_text"][:1000]})  # 限制输入长度
         
-        # 生成学习笔记
         understanding_notes = response.content
         
-        # 同时提取页面结构信息
         structure_template = """提取页面的结构化信息(JSON格式):
 
 内容: {raw_text}
@@ -441,28 +430,26 @@ class StructureUnderstandingAgent:
         return state
 
 
-# ==================== Step 2: 知识缺口识别 Agent (针对学生) ====================
+# ==================== Step 2: 知识缺口识别 Agent  ====================
 class GapIdentificationAgent:
-    """知识缺口识别 Agent - 识别学生理解障碍"""
+    """识别学生理解障碍"""
     
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0.2)
     
     def _parse_partial_json(self, text: str) -> List[Dict]:
-        """手动解析部分JSON，提取有效的对象（使用正则表达式）"""
+        """手动解析部分JSON，使用正则表达式"""
         import re
         gaps = []
         
         if not text or not text.strip():
             return gaps
         
-        # 移除markdown代码块标记
         text = re.sub(r'```json\s*', '', text, flags=re.IGNORECASE)
         text = re.sub(r'```\s*$', '', text)
         text = text.strip()
         
-        # 方法1: 查找完整的JSON对象 { "concept": "...", "gap_type": "...", "priority": ... }
-        # 支持多行和可能的截断，更宽松的模式
+        # 方法1: 查找完整的JSON对象
         pattern1 = r'\{\s*"concept"\s*:\s*"([^"]+)"\s*,\s*"gap_type"\s*:\s*"([^"]+)"\s*,\s*"priority"\s*:\s*(\d+)'
         
         matches = re.finditer(pattern1, text, re.DOTALL)
@@ -481,7 +468,7 @@ class GapIdentificationAgent:
             except Exception as e:
                 continue
         
-        # 方法2: 如果方法1没找到，尝试更宽松的模式（允许字段顺序不同）
+        # 方法2: 如果方法1没找到，则尝试允许字段顺序不同
         if not gaps:
             # 匹配 concept 和 gap_type，不要求顺序
             pattern2 = r'"concept"\s*:\s*"([^"]+)"[^}]*"gap_type"\s*:\s*"([^"]+)"[^}]*"priority"\s*:\s*(\d+)'
@@ -509,7 +496,6 @@ class GapIdentificationAgent:
         has_global_context = state.get("global_outline") and state.get("knowledge_units")
         
         if has_global_context:
-            # 有全局上下文时，使用增强的prompt
             template = """你是教学助手,基于整个文档的全局分析结果,识别学生理解当前页面内容的障碍点。
 
 文档全局信息:
@@ -544,7 +530,7 @@ class GapIdentificationAgent:
             # 格式化全局知识点单元
             knowledge_units_str = ""
             if state.get("knowledge_units"):
-                for unit in state["knowledge_units"][:10]:  # 最多显示10个
+                for unit in state["knowledge_units"][:10]: 
                     pages_str = ",".join(map(str, unit.pages))
                     concepts_str = ",".join(unit.core_concepts)
                     knowledge_units_str += f"- {unit.title} (页码: {pages_str}, 核心概念: {concepts_str})\n"
@@ -567,7 +553,6 @@ class GapIdentificationAgent:
                 state["knowledge_gaps"] = []
                 return state
         else:
-            # 没有全局上下文时，使用原始prompt
             template = """你是教学助手,识别学生理解这段内容的障碍点。
 
 内容: {raw_text}
@@ -613,11 +598,10 @@ class GapIdentificationAgent:
             return state
         
         try:
-            # 尝试解析JSON，支持markdown代码块和截断的JSON
             response_text = response.content.strip() if response.content else ""
             original_text = response_text
             
-            # 打印原始响应用于调试
+            # 打印原始响应用
             print(f"🔍 原始LLM响应长度: {len(response_text)} 字符")
             if len(response_text) == 0:
                 print(f"❌ LLM响应为空！")
@@ -626,10 +610,9 @@ class GapIdentificationAgent:
                 state["knowledge_gaps"] = []
                 return state
             
-            # 移除可能的markdown代码块标记
             if response_text.startswith("```"):
                 print(f"🔍 检测到markdown代码块，开始提取JSON...")
-                # 使用更简单的方法：直接查找```json和```之间的内容
+                # 直接查找```json和```之间的内容
                 if "```json" in response_text:
                     start = response_text.find("```json") + 7
                     end = response_text.find("```", start)
@@ -654,7 +637,7 @@ class GapIdentificationAgent:
                                     in_code_block = not in_code_block
                                     print(f"   第{i+1}行: 代码块标记，in_code_block={in_code_block}")
                                     continue
-                                if in_code_block:  # 修复：应该在代码块内时添加
+                                if in_code_block:  
                                     json_lines.append(line)
                                     if len(json_lines) <= 3:
                                         print(f"   第{i+1}行: 添加到JSON ({len(line)} 字符)")
@@ -706,7 +689,6 @@ class GapIdentificationAgent:
                     else:
                         # 如果正则也失败，尝试查找JSON数组
                         import re
-                        # 尝试找到 [ ... ] 模式
                         array_match = re.search(r'\[[\s\S]*?\]', response_text)
                         if array_match:
                             try:
@@ -718,15 +700,12 @@ class GapIdentificationAgent:
                     # 如果JSON被截断，尝试找到最后一个完整的对象
                     print(f"⚠️  JSON被截断，尝试修复...")
                     truncated_text = response_text[:e.pos]
-                    
-                    # 找到最后一个完整的对象
+
                     last_brace = truncated_text.rfind('}')
                     if last_brace > 0:
-                        # 找到这个对象所属的数组
                         before_brace = truncated_text[:last_brace]
                         last_bracket = before_brace.rfind('[')
                         if last_bracket >= 0:
-                            # 尝试提取完整的数组
                             potential_json = truncated_text[last_bracket:last_brace+1] + ']'
                             try:
                                 gaps_data = json.loads(potential_json)
@@ -750,16 +729,14 @@ class GapIdentificationAgent:
                     if gaps_data:
                         print(f"✅ 通过正则表达式提取了 {len(gaps_data)} 个对象")
             
-            # 如果还是None，设为空列表
             if gaps_data is None:
                 gaps_data = []
             
-            # 确保是列表
             if not isinstance(gaps_data, list):
                 gaps_data = [gaps_data] if gaps_data else []
             
             knowledge_gaps = []
-            for g in gaps_data[:5]:  # 最多5个
+            for g in gaps_data[:5]:  
                 if not isinstance(g, dict):
                     continue
                     
@@ -814,9 +791,9 @@ class GapIdentificationAgent:
         return state
 
 
-# ==================== Step 3: 定向知识扩展 Agent (精简) ====================
+# ==================== Step 3: 定向知识扩展 Agent  ====================
 class KnowledgeExpansionAgent:
-    """定向知识扩展 Agent - 生成补充说明"""
+    """生成补充说明"""
     
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0.6)
@@ -831,7 +808,6 @@ class KnowledgeExpansionAgent:
         for gap in sorted_gaps:
             gap_type = gap.gap_types[0] if gap.gap_types else "解释"
             
-            # 精简 prompt,明确要求
             template = """为学生补充说明(150字内,通俗易懂):
 
 概念: {concept}
@@ -852,7 +828,7 @@ PPT原文: {raw_text}
             expanded_contents.append(ExpandedContent(
                 concept=gap.concept,
                 gap_type=gap_type,
-                content=response.content[:300],  # 限制长度
+                content=response.content[:300], 
                 sources=["AI生成"]
             ))
         
@@ -860,9 +836,9 @@ PPT原文: {raw_text}
         return state
 
 
-# ==================== Step 4: 外部检索增强 Agent (优化策略) ====================
+# ==================== Step 4: 外部检索增强 Agent  ====================
 class RetrievalAgent:
-    """外部检索增强 Agent - 智能多源检索"""
+    """智能多源检索"""
     
     def __init__(self, llm_config: LLMConfig, vector_db_path: str = "./knowledge_base"):
         self.llm = llm_config.create_llm(temperature=0)
@@ -873,7 +849,6 @@ class RetrievalAgent:
         self.vector_db_path = vector_db_path
         self.vectorstore = None
         
-        # 多源检索配置
         self.sources = {
             "baidu_baike": {"url": "https://baike.baidu.com", "available": False},
             "wikipedia": {"url": "https://zh.wikipedia.org", "available": False},
@@ -904,20 +879,16 @@ class RetrievalAgent:
                 )
     
     def retrieve_local(self, query: str, k: int = 2) -> List[Document]:
-        """本地 RAG 检索"""
         if not self.vectorstore:
             return []
         return self.vectorstore.similarity_search(query, k=k)
     
     def retrieve_external(self, query: str, preferred_sources: List[str] = None) -> List[Document]:
-        """外部检索 - 使用MCPRouter（合并所有外部资源搜索）"""
         from ..services.mcp_tools import MCPRouter
         
         docs = []
         
-        # 如果指定了优先源，使用它们；否则使用所有可用源
         if preferred_sources:
-            # 映射源名称到MCPRouter的源名称
             source_mapping = {
                 "baidu_baike": "baike",
                 "baike": "baike",
@@ -925,7 +896,6 @@ class RetrievalAgent:
                 "arxiv": "arxiv"
             }
             
-            # 转换源名称
             mcp_sources = []
             for source in preferred_sources:
                 if source in source_mapping:
@@ -939,21 +909,18 @@ class RetrievalAgent:
             
             print(f"   🔍 使用MCPRouter搜索，查询: '{query}', 源: {mcp_sources}")
         else:
-            # 使用所有可用源
             available_sources = [name for name, config in self.sources.items() if config["available"]]
             
             if not available_sources:
                 print(f"   ⚠️  没有可用的外部源")
                 return docs
             
-            # 映射源名称到MCPRouter的源名称
             source_mapping = {
                 "baidu_baike": "baike",
                 "wikipedia": "wikipedia",
                 "arxiv": "arxiv"
             }
             
-            # 转换源名称
             mcp_sources = []
             for source in available_sources:
                 if source in source_mapping:
@@ -969,12 +936,10 @@ class RetrievalAgent:
             mcp_router = MCPRouter()
             docs = mcp_router.search(query, preferred_sources=mcp_sources)
             print(f"   ✅ MCPRouter返回 {len(docs)} 条结果")
-            
-            # 过滤掉占位符文档
+
             filtered_docs = []
             for doc in docs:
                 if "未找到" not in doc.page_content:
-                    # 允许有URL或没有URL的文档，只要内容有效
                     filtered_docs.append(doc)
             
             print(f"   ✅ 过滤后剩余 {len(filtered_docs)} 条有效结果")
@@ -988,15 +953,14 @@ class RetrievalAgent:
     def run(self, state: GraphState) -> GraphState:
         """执行检索增强（合并所有外部资源搜索，包括标题和核心概念，百度作为保底）"""
         retrieved_docs = []
-        seen_urls = set()  # 用于去重
+        seen_urls = set()  
         
-        # 1. 准备搜索查询列表（包括标题、知识缺口、知识聚类）
+        # 1. 准备搜索查询列表
         search_queries = []
         
-        # 添加页面标题（如果有）
         raw_text = state.get("raw_text", "")
         if raw_text:
-            # 尝试从原始文本中提取标题（第一行或前50字符）
+            # 尝试从原始文本中提取标题
             lines = raw_text.split('\n')
             if lines:
                 title = lines[0].strip()[:50]
@@ -1012,17 +976,17 @@ class RetrievalAgent:
             
             for gap in gaps_to_use:
                 concept = gap.concept if hasattr(gap, 'concept') else gap.get("concept", "")
-                if concept and len(concept) <= 50:  # 限制长度
+                if concept and len(concept) <= 50:  
                     search_queries.append(concept)
         
-        # 添加知识聚类概念（如果没有足够的查询）
+        # 添加知识聚类概念
         if len(search_queries) < 3:
             clusters = state.get("knowledge_clusters", [])
             for cluster in clusters[:3]:
                 concept = cluster.get("concept", "") if isinstance(cluster, dict) else ""
                 if concept and concept not in search_queries and len(concept) <= 50:
                     search_queries.append(concept)
-                    if len(search_queries) >= 5:  # 最多5个查询
+                    if len(search_queries) >= 5: 
                         break
         
         if not search_queries:
@@ -1053,8 +1017,8 @@ class RetrievalAgent:
             preferred_sources_order.append("baike")
         
         # 4. 对每个查询进行搜索（合并所有外部资源）
-        for query in search_queries[:5]:  # 最多5个查询
-            if len(retrieved_docs) >= 10:  # 最多10条结果
+        for query in search_queries[:5]:  
+            if len(retrieved_docs) >= 10:  
                 break
             
             print(f"   🔍 搜索查询: '{query}'")
@@ -1072,13 +1036,12 @@ class RetrievalAgent:
             except Exception as e:
                 print(f"      ⚠️  本地RAG检索失败: {e}")
             
-            # 4.2 外部检索（所有可用源）
+            # 4.2 外部检索
             if preferred_sources_order:
                 try:
                     external_docs = self.retrieve_external(query, preferred_sources=preferred_sources_order)
                     for doc in external_docs:
                         url = doc.metadata.get("url", "")
-                        # 允许没有URL的文档（如百度百科），但要去重
                         doc_id = url or doc.page_content[:50]
                         if doc_id not in seen_urls:
                             seen_urls.add(doc_id)
@@ -1088,10 +1051,10 @@ class RetrievalAgent:
                 except Exception as e:
                     print(f"      ⚠️  外部检索失败: {e}")
         
-        # 5. 保底：如果还是没有结果，尝试百度保底搜索
+        # 5. 百度保底搜索
         if len(retrieved_docs) == 0 and self.sources.get("baidu_baike", {}).get("available"):
             print(f"   🔄 未找到结果，尝试百度保底搜索...")
-            for query in search_queries[:2]:  # 最多尝试2个查询
+            for query in search_queries[:2]:  
                 try:
                     from ..services.mcp_tools import MCPRouter
                     mcp_router = MCPRouter()
@@ -1108,20 +1071,20 @@ class RetrievalAgent:
                 except Exception as e:
                     print(f"      ⚠️  百度保底搜索失败: {e}")
         
-        state["retrieved_docs"] = retrieved_docs[:10]  # 最多10条
+        state["retrieved_docs"] = retrieved_docs[:10]  
         print(f"✅ 检索完成，共 {len(state['retrieved_docs'])} 条参考资料")
         return state
 
 
-# ==================== Step 5: 内容一致性校验 Agent (防幻觉) ====================
+# ==================== Step 5: 内容一致性校验 Agent  ====================
 class ConsistencyCheckAgent:
-    """内容一致性校验 Agent - 防止幻觉"""
+    """防止幻觉"""
     
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0)
     
     def run(self, state: GraphState) -> GraphState:
-        """执行一致性校验（不搜索外部资源，只做内容校验和修正）"""
+        """执行一致性校验）"""
         # 如果没有补充内容，跳过校验
         expanded_content = state.get("expanded_content", [])
         if not expanded_content:
@@ -1131,7 +1094,6 @@ class ConsistencyCheckAgent:
         
         print("⏳ 进行一致性校验和内容整理...")
         
-        # 优化: 明确防幻觉要求，确保不偏离源文本
         template = """你是内容审核员，负责校验和修正补充内容，确保不偏离PPT原文。
 
 PPT原文:
@@ -1167,7 +1129,6 @@ PPT原文:
         prompt = ChatPromptTemplate.from_template(template)
         chain = prompt | self.llm
         
-        # 处理expanded_content可能是对象或字典
         expanded_text = "\n".join([
             f"**{ec.concept if hasattr(ec, 'concept') else ec.get('concept', '')}**: {ec.content if hasattr(ec, 'content') else ec.get('content', '')}" 
             for ec in expanded_content
@@ -1180,7 +1141,7 @@ PPT原文:
         ]) if retrieved_docs else "无参考资料"
         
         response = chain.invoke({
-            "raw_text": state["raw_text"][:1000],  # 增加原文长度
+            "raw_text": state["raw_text"][:1000], 
             "expanded_content": expanded_text or "无补充内容",
             "retrieved_docs": retrieved_text
         })
@@ -1220,11 +1181,8 @@ PPT原文:
                         suggestions=result.get("suggestions", [])
                     )
                     
-                    # 如果有修正建议，更新expanded_content
                     if result.get("status") == "revise" and result.get("revised_content"):
                         print("✅ 检测到需要修正的内容，应用修正...")
-                        # 这里可以进一步处理修正后的内容
-                        # 暂时保留原内容，但记录修正建议
                 except json.JSONDecodeError as je:
                     print(f"⚠️  一致性校验JSON解析失败: {je}")
                     print(f"   响应内容前200字符: {response_text[:200]}")
@@ -1239,16 +1197,15 @@ PPT原文:
         return state
 
 
-# ==================== Step 6: 内容结构化整理 Agent (精简版) ====================
+# ==================== Step 6: 内容结构化整理 Agent  ====================
 class StructuredOrganizationAgent:
-    """内容结构化整理 Agent - 生成学习笔记"""
+    """生成学习笔记"""
     
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0.5)
     
     def run(self, state: GraphState) -> GraphState:
-        """整理最终笔记（确保不偏离源文本）"""
-        # 优化: 明确是学习笔记,不能偏离源文本
+        """整理最终笔记"""
         template = """整理学习笔记(Markdown格式,300字内)，必须严格基于PPT原文，不能偏离。
 
 PPT原文:
@@ -1301,7 +1258,7 @@ PPT原文:
         check_text = f"状态: {check_result.status}\n问题: {', '.join(check_result.issues) if check_result.issues else '无'}\n建议: {', '.join(check_result.suggestions) if check_result.suggestions else '无'}"
         
         response = chain.invoke({
-            "raw_text": state["raw_text"][:1500],  # 增加原文长度以确保不偏离
+            "raw_text": state["raw_text"][:1500], 
             "expanded_content": expanded_text or "无补充内容",
             "references": references_text,
             "check_result": check_text

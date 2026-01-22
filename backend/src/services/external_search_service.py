@@ -31,12 +31,12 @@ class ExternalSearchService:
     """外部资源搜索服务"""
     
     def __init__(self):
-        """初始化搜索服务"""
+        """初始化"""
         self._wikipedia_available = False
         self._arxiv_available = False
         self._web_available = False
         
-        # 尝试导入各个搜索库
+        # 导入各个搜索库
         try:
             import wikipedia
             self._wikipedia = wikipedia
@@ -82,16 +82,13 @@ class ExternalSearchService:
             return []
         
         try:
-            # 设置语言
             self._wikipedia.set_lang(lang)
-            
-            # 搜索页面
+  
             search_results = self._wikipedia.search(query, results=max_results)
             
             results = []
             for title in search_results[:max_results]:
                 try:
-                    # 获取页面摘要
                     page = self._wikipedia.page(title, auto_suggest=False)
                     
                     result = SearchResult(
@@ -135,8 +132,7 @@ class ExternalSearchService:
         try:
             # 创建搜索客户端
             client = self._arxiv.Client()
-            
-            # 执行搜索
+
             search = self._arxiv.Search(
                 query=query,
                 max_results=max_results,
@@ -145,8 +141,7 @@ class ExternalSearchService:
             
             results = []
             for paper in client.results(search):
-                # 提取作者
-                authors = [author.name for author in paper.authors[:3]]  # 最多3个作者
+                authors = [author.name for author in paper.authors[:3]]  
                 if len(paper.authors) > 3:
                     authors.append("et al.")
                 
@@ -189,7 +184,6 @@ class ExternalSearchService:
             # 创建搜索实例
             ddgs = self._ddgs()
             
-            # 执行搜索
             search_results = ddgs.text(query, max_results=max_results)
             
             results = []
@@ -255,7 +249,6 @@ class ExternalSearchService:
             tasks.append(self.search_web(query, max_results_per_source))
             sources_used.append("web")
         
-        # 等待所有搜索完成
         all_results = []
         if tasks:
             search_results = await asyncio.gather(*tasks, return_exceptions=True)

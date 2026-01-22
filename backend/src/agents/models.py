@@ -7,7 +7,6 @@ import operator
 from pydantic import BaseModel, Field
 
 
-# ==================== 数据模型 ====================
 class PageStructure(BaseModel):
     """页面结构解析结果"""
     page_id: int = Field(description="页面 ID")
@@ -19,7 +18,7 @@ class PageStructure(BaseModel):
 
 
 class KnowledgeCluster(BaseModel):
-    """知识聚类 - 针对学生理解的难度分析"""
+    """知识聚类"""
     concept: str = Field(description="概念名称")
     difficulty_level: int = Field(description="难度等级 1-5")
     why_difficult: str = Field(default="", description="为什么这个概念难理解")
@@ -57,7 +56,6 @@ class KnowledgeUnit(BaseModel):
     raw_texts: List[str] = Field(description="原始文本")
 
 
-# ==================== Graph State ====================
 class GraphState(TypedDict):
     """LangGraph 状态"""
     # 全局输入
@@ -70,25 +68,23 @@ class GraphState(TypedDict):
     current_page_id: int
     raw_text: str
     
-    # Agent 输出 - 结构化分析
+    # 结构化分析
     page_structure: Dict[str, Any]
     
-    # Agent 输出 - 知识聚类（难度分析）
+    # 知识聚类（难度分析）
     knowledge_clusters: List[Dict[str, Any]]
     
-    # Agent 输出 - 学生理解笔记
+    # 学生理解笔记
     understanding_notes: str
     
-    # Agent 输出 - 知识缺口识别
+    # 知识缺口识别
     knowledge_gaps: List[KnowledgeGap]
     
-    # Agent 输出 - 扩展内容
+    # 扩展内容
     expanded_content: List[ExpandedContent]
     
-    # Agent 输出 - 检索结果
+    # 检索结果
     retrieved_docs: List[Any]  # List[Document]
     
-    # Agent 输出 - 一致性校验
+    # 一致性校验
     check_result: CheckResult
-    
-    # Agent 输出 - 最终笔记

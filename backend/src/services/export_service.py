@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Any
 
 
 class ExportService:
-    """导出服务，用于将AI分析结果转换为Markdown格式"""
+    """导出服务"""
     
     def export_summary_markdown(
         self,
@@ -28,13 +28,11 @@ class ExportService:
         """
         lines = []
         
-        # 文档标题
         lines.append(f"# {doc_info.get('file_name', '未知文档')} - AI分析摘要")
         lines.append("")
         lines.append("---")
         lines.append("")
         
-        # 文档信息
         lines.append("## 📄 文档信息")
         lines.append("")
         lines.append(f"- **文件名**: {doc_info.get('file_name', '未知')}")
@@ -47,7 +45,6 @@ class ExportService:
             lines.append(f"- **更新时间**: {doc_info['updated_at']}")
         lines.append("")
         
-        # 全局分析摘要
         if global_analysis:
             lines.append("## 📚 全局分析摘要")
             lines.append("")
@@ -139,14 +136,12 @@ class ExportService:
             Markdown格式的字符串
         """
         lines = []
-        
-        # 文档标题
+    
         lines.append(f"# {doc_info.get('file_name', '未知文档')} - AI分析补充内容")
         lines.append("")
         lines.append("---")
         lines.append("")
         
-        # 文档信息
         lines.append("## 📄 文档信息")
         lines.append("")
         lines.append(f"- **文件名**: {doc_info.get('file_name', '未知')}")
@@ -164,7 +159,6 @@ class ExportService:
             lines.append("## 📚 全局分析")
             lines.append("")
             
-            # 主题
             main_topic = global_analysis.get('main_topic', '未知')
             if main_topic and main_topic != '未知':
                 lines.append(f"### 核心主题")
@@ -172,15 +166,13 @@ class ExportService:
                 lines.append(f"**{main_topic}**")
                 lines.append("")
             
-            # 知识流程
             knowledge_flow = global_analysis.get('knowledge_flow', '')
             if knowledge_flow:
                 lines.append(f"### 知识逻辑流程")
                 lines.append("")
                 lines.append(f"{knowledge_flow}")
                 lines.append("")
-            
-            # 章节结构
+
             chapters = global_analysis.get('chapters', [])
             if chapters:
                 lines.append("### 章节结构")
@@ -196,8 +188,7 @@ class ExportService:
                     if key_concepts:
                         lines.append(f"- **核心概念**: {', '.join(key_concepts)}")
                     lines.append("")
-            
-            # 知识点单元
+
             knowledge_units = global_analysis.get('knowledge_units', [])
             if knowledge_units:
                 lines.append("### 知识点单元")
@@ -221,16 +212,14 @@ class ExportService:
         if include_pages and page_analyses:
             lines.append("## 📑 页面详细分析")
             lines.append("")
-            
-            # 按页码排序
+
             sorted_pages = sorted(page_analyses.keys())
             
             for page_id in sorted_pages:
                 analysis = page_analyses[page_id]
                 lines.append(f"### 第 {page_id} 页")
                 lines.append("")
-                
-                # 知识聚类
+
                 knowledge_clusters = analysis.get('knowledge_clusters', [])
                 if knowledge_clusters:
                     lines.append("#### 🔍 难点概念识别")
@@ -242,16 +231,14 @@ class ExportService:
                         if explanation:
                             lines.append(f"  {explanation}")
                         lines.append("")
-                
-                # 结构理解
+ 
                 structure_notes = analysis.get('structure_notes', '')
                 if structure_notes:
                     lines.append("#### 📐 结构理解")
                     lines.append("")
                     lines.append(structure_notes)
                     lines.append("")
-                
-                # 知识缺口
+   
                 gaps = analysis.get('gaps', [])
                 if gaps:
                     lines.append("#### ⚠️ 知识缺口")
@@ -262,15 +249,13 @@ class ExportService:
                         lines.append(f"- **{gap_type}**: {description}")
                     lines.append("")
                 
-                # 理解笔记
                 understanding_notes = analysis.get('understanding_notes', '')
                 if understanding_notes:
                     lines.append("#### 📝 理解笔记")
                     lines.append("")
                     lines.append(understanding_notes)
                     lines.append("")
-                
-                # 深度分析
+
                 deep_analysis = analysis.get('deep_analysis', '')
                 if deep_analysis:
                     lines.append("#### 🧠 深度分析")
