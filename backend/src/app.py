@@ -8,7 +8,9 @@ import uuid
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, WebSocket, Query, Body, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
+import asyncio
+import sys
 
 from src.utils.helpers import ensure_supported_ext, save_upload_to_temp, download_to_temp
 from src.services.ppt_parser_service import DocumentParserService
@@ -691,11 +693,17 @@ async def analyze_page_stream(
                 if cached:
                     print(f"✅ 找到缓存分析结果，直接返回 (doc_id={request.doc_id}, page_id={request.page_id})")
                     yield f"data: {json.dumps({'stage': 'clustering', 'data': cached.get('knowledge_clusters', []), 'message': '已加载历史分析：知识聚类', 'cached': True})}\n\n"
+                    await asyncio.sleep(0.01)  # 确保数据被发送
                     yield f"data: {json.dumps({'stage': 'understanding', 'data': cached.get('understanding_notes', ''), 'message': '已加载历史分析：学习笔记', 'cached': True})}\n\n"
+                    await asyncio.sleep(0.01)
                     yield f"data: {json.dumps({'stage': 'gaps', 'data': cached.get('knowledge_gaps', []), 'message': '已加载历史分析：知识缺口', 'cached': True})}\n\n"
+                    await asyncio.sleep(0.01)
                     yield f"data: {json.dumps({'stage': 'expansion', 'data': cached.get('expanded_content', []), 'message': '已加载历史分析：补充说明', 'cached': True})}\n\n"
+                    await asyncio.sleep(0.01)
                     yield f"data: {json.dumps({'stage': 'retrieval', 'data': cached.get('references', []), 'message': '已加载历史分析：参考资料', 'cached': True})}\n\n"
+                    await asyncio.sleep(0.01)
                     yield f"data: {json.dumps({'stage': 'complete', 'data': cached, 'message': '历史分析加载完成', 'cached': True})}\n\n"
+                    await asyncio.sleep(0.01)
                     return
                 else:
                     print(f"⚠️ 未找到缓存分析结果 (doc_id={request.doc_id}, page_id={request.page_id})")
@@ -707,6 +715,7 @@ async def analyze_page_stream(
             # 如果是强制重新分析，输出提示
             if request.force:
                 yield f"data: {json.dumps({'stage': 'info', 'data': {}, 'message': '🔄 强制重新分析，忽略缓存...'})}\n\n"
+                await asyncio.sleep(0.01)
 
             # 获取全局分析结果
             global_analysis = None
@@ -721,6 +730,7 @@ async def analyze_page_stream(
             # 步骤1: 知识聚类
             print("⏳ 开始知识聚类...")
             yield f"data: {json.dumps({'stage': 'clustering', 'data': [], 'message': '正在分析难点概念...'})}\n\n"
+            await asyncio.sleep(0.01)
             
             knowledge_clusters = service.clustering_agent.run(
                 request.content,
@@ -729,10 +739,12 @@ async def analyze_page_stream(
             print(f"✅ 知识聚类完成: {len(knowledge_clusters)} 个概念")
             clustering_msg = f'识别了 {len(knowledge_clusters)} 个难点概念'
             yield f"data: {json.dumps({'stage': 'clustering', 'data': knowledge_clusters, 'message': clustering_msg})}\n\n"
+            await asyncio.sleep(0.01)
             
             # 步骤2: 学习笔记
             print("⏳ 开始生成学习笔记...")
             yield f"data: {json.dumps({'stage': 'understanding', 'data': '', 'message': '正在生成学习笔记...'})}\n\n"
+            await asyncio.sleep(0.01)
             
             from src.agents.models import CheckResult
             
@@ -780,10 +792,12 @@ async def analyze_page_stream(
             understanding_notes = state.get("understanding_notes", "")
             print(f"✅ 学习笔记完成")
             yield f"data: {json.dumps({'stage': 'understanding', 'data': understanding_notes, 'message': '学习笔记已生成'})}\n\n"
+            await asyncio.sleep(0.01)
             
             # 步骤3: 知识缺口
             print("⏳ 开始识别知识缺口...")
             yield f"data: {json.dumps({'stage': 'gaps', 'data': [], 'message': '正在识别知识缺口...'})}\n\n"
+            await asyncio.sleep(0.01)
             
             state = service.gap_agent.run(state)
             gaps_data = [
@@ -796,10 +810,12 @@ async def analyze_page_stream(
             print(f"✅ 缺口识别完成: {len(gaps_data)} 个缺口")
             gaps_msg = f'识别了 {len(gaps_data)} 个理解缺口'
             yield f"data: {json.dumps({'stage': 'gaps', 'data': gaps_data, 'message': gaps_msg})}\n\n"
+            await asyncio.sleep(0.01)
             
             # 步骤4: 知识扩展
             print("⏳ 开始生成补充说明...")
             yield f"data: {json.dumps({'stage': 'expansion', 'data': [], 'message': '正在生成补充说明...'})}\n\n"
+            await asyncio.sleep(0.01)
             
             state = service.expansion_agent.run(state)
             expanded_data = []
@@ -817,16 +833,19 @@ async def analyze_page_stream(
             print(f"✅ 补充说明完成: {len(expanded_data)} 条")
             expansion_msg = f'生成了 {len(expanded_data)} 条补充说明'
             yield f"data: {json.dumps({'stage': 'expansion', 'data': expanded_data, 'message': expansion_msg})}\n\n"
+            await asyncio.sleep(0.01)
             
             # 步骤5: 外部检索
             print("⏳ 开始搜索参考资料...")
             yield f"data: {json.dumps({'stage': 'retrieval', 'data': [], 'message': '正在搜索参考资料...'})}\n\n"
+            await asyncio.sleep(0.01)
             
             state = service.retrieval_agent.run(state)
             retrieved_count = len(state.get('retrieved_docs', []))
             print(f"✅ 检索完成: {retrieved_count} 条参考")
             retrieval_msg = f'找到了 {retrieved_count} 条参考资料'
             yield f"data: {json.dumps({'stage': 'retrieval', 'data': [], 'message': retrieval_msg})}\n\n"
+            await asyncio.sleep(0.01)
             
             # 步骤6-7: 校验和整理（参考文献已在RetrievalAgent中搜索完成）
             print("⏳ 进行一致性校验和内容整理...")
@@ -861,6 +880,7 @@ async def analyze_page_stream(
                 persistence.upsert_page_analysis(request.doc_id, request.page_id, complete_data)
 
             yield f"data: {json.dumps({'stage': 'complete', 'data': complete_data, 'message': '分析完成！'})}\n\n"
+            await asyncio.sleep(0.01)
             
         except Exception as e:
             import traceback
@@ -869,7 +889,12 @@ async def analyze_page_stream(
             error_msg = f'错误: {str(e)}'
             yield f"data: {json.dumps({'stage': 'error', 'data': {}, 'message': error_msg})}\n\n"
     
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    headers = {
+        "X-Accel-Buffering": "no",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 
 
 @app.post("/api/v1/chat")
