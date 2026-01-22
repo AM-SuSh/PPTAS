@@ -128,5 +128,34 @@ docker-compose down
 
 - 详细文档:  [USER_GUIDE_DETAILED](USER_GUIDE_DETAILED.md)
 - 技术文档:  [TECHNICAL_REPORT.md](TECHNICAL_REPORT.md)
-- API文档:  http://localhost:8000/docs
+- API 文档:  http://localhost:8000/docs
 - DEMO视频：查看
+
+
+## 任务分工
+
+贡献度均为33.3%，组内均分
+
+#### 高嘉泽@AM-SuSh
+- 前端设计与开发优化
+- 页面预览交互实现
+- 思维导图绘制与显示优化
+- 语义检索与向量数据库
+- 外部资源搜索
+
+#### 郭一心@SSSSizn 
+- LLM流水线架构设计与实现
+- 单页分析与全局分析
+- 数据库存储与缓存机制
+- AI助教功能
+- 技术文档编写与维护
+
+
+#### 李晨语@Licy1228
+- PPT内容解析
+- 关键词提取与标题优化
+- Docker容器化部署
+- Bug修复与冲突解决
+
+具体commits记录可查看：https://github.com/AM-SuSh/PPTAS/commits/main/
+
