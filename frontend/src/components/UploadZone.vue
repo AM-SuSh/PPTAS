@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 
-const emit = defineEmits(['file-selected', 'url-submitted', 'mock-click'])
+const emit = defineEmits(['file-selected', 'url-submitted'])
 const isDragging = ref(false)
 const isProcessing = ref(false)
 const fileInput = ref(null)
@@ -64,9 +64,6 @@ const submitUrl = () => {
   }, 400)
 }
 
-const mockDemo = () => {
-  emit('mock-click')
-}
 
 const handleUploadBoxClick = () => {
   if (fileInput.value) {
@@ -199,14 +196,6 @@ const handleUploadBoxClick = () => {
           </div>
         </div>
       </div>
-    </div>
-
-    <div class="demo-section">
-      <button @click="mockDemo" class="btn-demo">
-        <span class="btn-icon">✨</span>
-        预览学术扩展效果 (Demo)
-      </button>
-      <p class="demo-hint">无需上传文件，体验完整功能演示</p>
     </div>
 
     <div class="usage-guide">
@@ -513,45 +502,6 @@ const handleUploadBoxClick = () => {
   color: #ef4444;
   font-size: 0.9rem;
   font-weight: 500;
-}
-
-.demo-section {
-  text-align: center;
-  margin-top: 2rem;
-}
-
-.btn-demo {
-  margin-top: 1.5rem;
-  padding: 12px 32px;
-  border-radius: 99px;
-  border: 2px solid #e2e8f0;
-  background: white;
-  cursor: pointer;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #64748b;
-  transition: all 0.3s;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn-demo:hover {
-  border-color: #3b82f6;
-  color: #3b82f6;
-  background: #f0f7ff;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
-}
-
-.btn-icon {
-  font-size: 1.2rem;
-}
-
-.demo-hint {
-  color: #94a3b8;
-  font-size: 0.85rem;
-  margin-top: 0.8rem;
 }
 
 .usage-guide {

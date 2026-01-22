@@ -206,7 +206,6 @@ const resetApp = () => {
           v-if="!isLoading"
           @file-selected="handleFileUpload"
           @url-submitted="handleUrlUpload"
-          @mock-click="handleFileUpload"
       />
 
       <!-- 加载状态 -->
