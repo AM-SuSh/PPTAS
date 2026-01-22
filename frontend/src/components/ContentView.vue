@@ -95,6 +95,8 @@ const markdownToHtml = (markdown) => {
 watch(() => props.slide?.page_num, () => {
   shouldShowAIAnalysis.value = false
 })
+
+const initChat = async () => {
   if (!props.slide?.page_num) {
     console.warn('⚠️ 无法初始化聊天：页面信息缺失')
     return
@@ -148,6 +150,7 @@ watch(() => props.slide?.page_num, () => {
     isInitializingChat.value = false
   }
 }
+
 
 const triggerAIAnalysis = async (force = false) => {
   if (!props.slide?.page_num) return
@@ -1355,6 +1358,60 @@ const formatTime = (timestamp) => {
   padding: 0;
 }
 
+.markdown-body strong {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.markdown-body em {
+  font-style: italic;
+  color: #475569;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.75rem 0;
+  padding-left: 2rem;
+}
+
+.markdown-body li {
+  margin: 0.25rem 0;
+}
+
+.markdown-body code {
+  background: #f1f5f9;
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+  color: #dc2626;
+}
+
+.markdown-body pre {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  font-size: 0.95em;
+}
+
+.markdown-body blockquote {
+  border-left: 4px solid #cbd5e1;
+  padding-left: 1rem;
+  margin: 1rem 0;
+  color: #64748b;
+  font-style: italic;
+}
+
 .ai-analysis-content {
   display: flex;
   flex-direction: column;
@@ -2415,7 +2472,9 @@ const formatTime = (timestamp) => {
   margin: 0.5rem 0;
   color: #64748b;
   font-style: italic;
-eyframes spin {
+}
+
+@keyframes spin {
   from {
     transform: rotate(0deg);
   }
