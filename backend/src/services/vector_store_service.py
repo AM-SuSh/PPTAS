@@ -390,10 +390,24 @@ class VectorStoreService:
             
             print(f"   原始结果数: {len(results)}")
             
+            # 调试：显示前5个结果的文件名
+            if results:
+                print(f"   前5个结果的文件名:")
+                for i, (doc, dist) in enumerate(results[:5]):
+                    print(f"     {i+1}. {doc.metadata.get('file_name', 'unknown')} - 页 {doc.metadata.get('page_num', '?')} (距离: {dist:.3f})")
+            
             # 处理结果并去重
             # 策略：同一页面的多个chunk，只保留相似度最高的那个
+            # 同时计算关键词匹配度，提升包含检索词的结果排名
             page_best_results = {}  # {(file_name, page_num): best_result}
             filtered_count = 0
+            
+            # 提取查询关键词（用于关键词匹配加分）
+            query_lower = query.lower().strip()
+            query_keywords = set(query_lower.split())
+            # 对于中文，也尝试将整个查询作为完整关键词
+            if len(query_lower) >= 2:
+                query_keywords.add(query_lower)  # 添加完整查询作为关键词
             
             for doc, distance in results:
                 # 计算相似度（ChromaDB使用余弦距离）
@@ -407,32 +421,82 @@ class VectorStoreService:
                     filtered_count += 1
                     continue
                 
+                # 计算关键词匹配度（大幅提升包含检索词的结果）
+                content_lower = doc.page_content.lower()
+                keyword_match_score = 0.0
+                matched_keywords = 0
+                full_query_matched = False
+                
+                # 首先检查完整查询是否匹配（最重要）
+                if query_lower in content_lower:
+                    full_query_matched = True
+                    count = content_lower.count(query_lower)
+                    # 完整匹配给予大幅加分：出现1次+0.4，每多出现1次+0.1（最多+0.6）
+                    keyword_match_score += min(0.6, 0.4 + (count - 1) * 0.1)
+                    matched_keywords += 1
+                    print(f"   ✅ 完整匹配查询 '{query_lower}' 在 {doc.metadata.get('file_name', 'unknown')} 页{doc.metadata.get('page_num', '?')} (出现{count}次)")
+                
+                # 然后检查单个关键词匹配
+                for keyword in query_keywords:
+                    if keyword == query_lower:
+                        continue  # 已经处理过完整查询
+                    if len(keyword) >= 2:  # 只考虑长度>=2的关键词
+                        count = content_lower.count(keyword)
+                        if count > 0:
+                            matched_keywords += 1
+                            # 单个关键词匹配：出现1次+0.2，每多出现1次+0.05（最多+0.3）
+                            keyword_match_score += min(0.3, 0.2 + (count - 1) * 0.05)
+                
+                # 如果匹配了多个关键词，额外加分
+                if matched_keywords >= 2:
+                    keyword_match_score += 0.15
+                
+                # 如果没有匹配任何关键词，适当降分（避免不相关结果排名过高）
+                if matched_keywords == 0:
+                    keyword_match_score = -0.1  # 降分0.1
+                    print(f"   ⚠️ 无关键词匹配: {doc.metadata.get('file_name', 'unknown')} 页{doc.metadata.get('page_num', '?')} (语义分={similarity:.3f})")
+                
+                # 综合相似度 = 语义相似度 + 关键词匹配加分/降分
+                final_similarity = max(0.0, min(1.0, similarity + keyword_match_score))
+                
                 metadata = doc.metadata
                 page_key = (
                     metadata.get("file_name", ""),
                     metadata.get("page_num", 0)
                 )
                 
-                # 去重：同一页面的多个chunk，只保留相似度最高的
+                # 去重：同一页面的多个chunk，只保留综合相似度最高的
                 if page_key in page_best_results:
-                    if similarity > page_best_results[page_key]["score"]:
+                    if final_similarity > page_best_results[page_key]["score"]:
                         # 找到更相关的chunk，替换
                         page_best_results[page_key] = {
                             "content": doc.page_content,
                             "metadata": metadata,
-                            "score": similarity,
-                            "distance": distance
+                            "score": final_similarity,
+                            "distance": distance,
+                            "semantic_score": similarity,  # 保留原始语义相似度
+                            "keyword_boost": keyword_match_score  # 关键词加分
                         }
                 else:
                     page_best_results[page_key] = {
                         "content": doc.page_content,
                         "metadata": metadata,
-                        "score": similarity,
-                        "distance": distance
+                        "score": final_similarity,
+                        "distance": distance,
+                        "semantic_score": similarity,
+                        "keyword_boost": keyword_match_score
                     }
             
             # 转换为列表
             formatted_results = list(page_best_results.values())
+            
+            # 优化排序：如果指定了file_name，给当前文件的结果加权
+            if file_name:
+                for result in formatted_results:
+                    if result["metadata"].get("file_name") == file_name:
+                        # 当前文件的结果，分数加权 +0.2
+                        result["score"] = min(1.0, result["score"] + 0.2)
+                        result["boosted"] = True
             
             # 按相似度排序
             formatted_results.sort(key=lambda x: x["score"], reverse=True)
@@ -441,8 +505,23 @@ class VectorStoreService:
             print(f"   过滤掉 {filtered_count} 个低分结果")
             print(f"   去重后结果数: {len(formatted_results)}")
             if formatted_results:
-                print(f"   最高分: {formatted_results[0]['score']:.3f}")
+                print(f"   最高分: {formatted_results[0]['score']:.3f} (语义: {formatted_results[0].get('semantic_score', 0):.3f}, 关键词加分: {formatted_results[0].get('keyword_boost', 0):.3f})")
                 print(f"   最低分: {formatted_results[-1]['score']:.3f}")
+                # 显示前3个结果的详细信息
+                print(f"   前3个结果详情:")
+                for i, r in enumerate(formatted_results[:3]):
+                    print(f"     {i+1}. {r['metadata'].get('file_name', 'unknown')} 页{r['metadata'].get('page_num', '?')}: "
+                          f"总分={r['score']:.3f} (语义={r.get('semantic_score', 0):.3f}, "
+                          f"关键词={r.get('keyword_boost', 0):.3f})")
+                # 显示结果的文件分布
+                file_distribution = {}
+                for r in formatted_results:
+                    fn = r['metadata'].get('file_name', 'unknown')
+                    file_distribution[fn] = file_distribution.get(fn, 0) + 1
+                print(f"   文件分布:")
+                for fn, count in file_distribution.items():
+                    is_target = " ⭐" if file_name and fn == file_name else ""
+                    print(f"     - {fn}: {count} 个结果{is_target}")
             else:
                 print(f"   ⚠️ 没有找到满足条件的结果！")
                 # 如果没有结果，降低min_score重试

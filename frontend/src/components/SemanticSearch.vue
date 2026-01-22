@@ -22,9 +22,56 @@ const previewDialog = ref({
 
 const hasResults = computed(() => searchResults.value.length > 0)
 
+// 提取文件名的基础名称（去掉路径）
+const getBaseFileName = (fileName) => {
+  if (!fileName) return ''
+  // 去掉路径，只保留文件名
+  const baseName = fileName.split(/[/\\]/).pop() || fileName
+  return baseName.trim()
+}
+
 // 检查结果是否来自当前文件
 const isCurrentFile = (result) => {
-  return result.metadata?.file_name === props.currentFileName
+  const resultFileName = result.metadata?.file_name
+  const currentFileName = props.currentFileName
+  
+  // 如果任一为空，返回false
+  if (!resultFileName || !currentFileName) {
+    if (import.meta.env.DEV) {
+      console.log('🔍 文件匹配检查 - 缺少文件名:', {
+        resultFileName: resultFileName || 'null',
+        currentFileName: currentFileName || 'null'
+      })
+    }
+    return false
+  }
+  
+  // 提取基础文件名（去掉路径）
+  const resultBase = getBaseFileName(resultFileName)
+  const currentBase = getBaseFileName(currentFileName)
+  
+  // 精确匹配（去除前后空格）
+  const match = resultBase === currentBase
+  
+  // 调试信息（开发环境）
+  if (import.meta.env.DEV) {
+    if (!match) {
+      console.log('🔍 文件不匹配:', {
+        resultFileName: resultFileName,
+        resultBase: resultBase,
+        currentFileName: currentFileName,
+        currentBase: currentBase,
+        match: match
+      })
+    } else {
+      console.log('✅ 文件匹配:', {
+        resultBase: resultBase,
+        currentBase: currentBase
+      })
+    }
+  }
+  
+  return match
 }
 
 const performSearch = async () => {
@@ -38,17 +85,43 @@ const performSearch = async () => {
   showResults.value = false
 
   try {
+    console.log('🔍 发起搜索:', {
+      query: searchQuery.value,
+      currentFileName: props.currentFileName
+    })
+    
     const response = await pptApi.searchSemantic(
       searchQuery.value,
-      10, // top_k
-      props.currentFileName || null, // 可选：限制在当前文件
+      10, // top_k - 改为10个结果
+      null, // 不过滤文件，搜索所有文档，然后前端排序
       null, // file_type
-      0.3 // min_score
+      0.0 // min_score - 降低到0，获取所有结果，前端再过滤
     )
 
     if (response.data.success) {
-      searchResults.value = response.data.results || []
+      let results = response.data.results || []
+      
+      console.log('📊 原始搜索结果:', results.length, '个')
+      
+      // 优先显示当前文件的结果
+      const currentFileResults = results.filter(r => 
+        r.metadata?.file_name === props.currentFileName
+      )
+      const otherFileResults = results.filter(r => 
+        r.metadata?.file_name !== props.currentFileName
+      )
+      
+      console.log('📂 当前文件结果:', currentFileResults.length, '个')
+      console.log('📁 其他文件结果:', otherFileResults.length, '个')
+      
+      // 当前文件结果排在前面，其他文件结果排在后面
+      searchResults.value = [...currentFileResults, ...otherFileResults]
       showResults.value = true
+      
+      // 如果当前文件没有结果，提示
+      if (currentFileResults.length === 0 && props.currentFileName) {
+        console.warn('⚠️ 当前文件没有匹配结果，只显示其他文件的结果')
+      }
     } else {
       searchError.value = response.data.error || '搜索失败'
     }
@@ -133,6 +206,47 @@ const closePreview = () => {
   previewDialog.value.result = null
   previewDialog.value.slideData = null
 }
+
+// 高亮关键词
+const highlightKeywords = (text, query) => {
+  if (!text || !query) return text
+  
+  let highlightedText = text
+  const queryTrimmed = query.trim()
+  
+  // 首先尝试完整查询匹配（对中文很重要）
+  if (queryTrimmed.length >= 2) {
+    // 转义特殊字符
+    const escapedQuery = queryTrimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(`(${escapedQuery})`, 'gi')
+    highlightedText = highlightedText.replace(regex, '<mark>$1</mark>')
+  }
+  
+  // 然后处理空格分割的关键词（英文查询）
+  const keywords = queryTrimmed.split(/\s+/)
+  keywords.forEach(keyword => {
+    if (keyword.length < 2 || keyword === queryTrimmed) return // 跳过太短的词或已处理的完整查询
+    
+    // 转义特殊字符
+    const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(`(${escapedKeyword})`, 'gi')
+    highlightedText = highlightedText.replace(regex, '<mark>$1</mark>')
+  })
+  
+  // 截取前200字符（避免显示太多内容）
+  if (highlightedText.length > 200) {
+    // 尝试找到第一个高亮词的位置，从那里开始截取
+    const markIndex = highlightedText.indexOf('<mark>')
+    if (markIndex > 50) {
+      // 从高亮词前50个字符开始
+      highlightedText = '...' + highlightedText.substring(markIndex - 50, markIndex + 200) + '...'
+    } else {
+      highlightedText = highlightedText.substring(0, 200) + '...'
+    }
+  }
+  
+  return highlightedText
+}
 </script>
 
 <template>
@@ -193,8 +307,7 @@ const closePreview = () => {
               <span v-if="!isCurrentFile(result)" class="other-file-badge">其他文件</span>
             </span>
           </div>
-          <div class="result-content">
-            {{ result.content }}
+          <div class="result-content" v-html="highlightKeywords(result.content, searchQuery)">
           </div>
           <div class="result-footer">
             <span class="result-type">{{ result.metadata?.slide_type || 'content' }}</span>
@@ -243,27 +356,16 @@ const closePreview = () => {
           </div>
           
           <div v-else-if="previewDialog.slideData" class="preview-content">
-            <!-- 显示页面预览图片 -->
+            <!-- 只显示页面预览图片 -->
             <div v-if="previewDialog.slideData.image" class="preview-image">
               <img 
                 :src="previewDialog.slideData.image" 
                 :alt="`第 ${previewDialog.slideData.page_num} 页`"
-                style="max-width: 100%; height: auto; border-radius: 4px;"
+                style="max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);"
               />
             </div>
-            
-            <!-- 显示文本内容 -->
-            <div class="preview-text">
-              <h4>{{ previewDialog.slideData.title }}</h4>
-              <div class="preview-points">
-                <div 
-                  v-for="(point, idx) in previewDialog.slideData.raw_points?.slice(0, 10)" 
-                  :key="idx"
-                  class="point-item"
-                >
-                  {{ typeof point === 'string' ? point : point.text }}
-                </div>
-              </div>
+            <div v-else class="no-image">
+              <p>该页面没有预览图片</p>
             </div>
           </div>
           
@@ -465,6 +567,14 @@ const closePreview = () => {
   overflow: hidden;
 }
 
+.result-content :deep(mark) {
+  background: #fef08a;
+  color: #854d0e;
+  padding: 0.125rem 0.25rem;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
 .result-footer {
   display: flex;
   gap: 0.5rem;
@@ -611,25 +721,17 @@ const closePreview = () => {
   padding: 1rem;
 }
 
-.preview-text h4 {
-  margin: 0 0 1rem 0;
-  color: #1e293b;
-  font-size: 1.2rem;
-}
-
-.preview-points {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.point-item {
-  padding: 0.5rem 0.75rem;
-  background: #f8fafc;
-  border-left: 3px solid #3b82f6;
+.preview-image img {
+  max-width: 100%;
+  height: auto;
   border-radius: 4px;
-  color: #475569;
-  line-height: 1.6;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.no-image {
+  text-align: center;
+  padding: 3rem;
+  color: #94a3b8;
 }
 
 .preview-error {
