@@ -448,6 +448,61 @@ class GapIdentificationAgent:
     def __init__(self, llm_config: LLMConfig):
         self.llm = llm_config.create_llm(temperature=0.2)
     
+    def _parse_partial_json(self, text: str) -> List[Dict]:
+        """手动解析部分JSON，提取有效的对象（使用正则表达式）"""
+        import re
+        gaps = []
+        
+        if not text or not text.strip():
+            return gaps
+        
+        # 移除markdown代码块标记
+        text = re.sub(r'```json\s*', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'```\s*$', '', text)
+        text = text.strip()
+        
+        # 方法1: 查找完整的JSON对象 { "concept": "...", "gap_type": "...", "priority": ... }
+        # 支持多行和可能的截断，更宽松的模式
+        pattern1 = r'\{\s*"concept"\s*:\s*"([^"]+)"\s*,\s*"gap_type"\s*:\s*"([^"]+)"\s*,\s*"priority"\s*:\s*(\d+)'
+        
+        matches = re.finditer(pattern1, text, re.DOTALL)
+        for match in matches:
+            try:
+                concept = match.group(1).strip()
+                gap_type = match.group(2).strip()
+                priority = int(match.group(3))
+                
+                if concept and gap_type:
+                    gaps.append({
+                        "concept": concept,
+                        "gap_type": gap_type,
+                        "priority": max(1, min(5, priority))
+                    })
+            except Exception as e:
+                continue
+        
+        # 方法2: 如果方法1没找到，尝试更宽松的模式（允许字段顺序不同）
+        if not gaps:
+            # 匹配 concept 和 gap_type，不要求顺序
+            pattern2 = r'"concept"\s*:\s*"([^"]+)"[^}]*"gap_type"\s*:\s*"([^"]+)"[^}]*"priority"\s*:\s*(\d+)'
+            matches = re.finditer(pattern2, text, re.DOTALL)
+            for match in matches:
+                try:
+                    concept = match.group(1).strip()
+                    gap_type = match.group(2).strip()
+                    priority = int(match.group(3))
+                    
+                    if concept and gap_type:
+                        gaps.append({
+                            "concept": concept,
+                            "gap_type": gap_type,
+                            "priority": max(1, min(5, priority))
+                        })
+                except:
+                    continue
+        
+        return gaps
+    
     def run(self, state: GraphState) -> GraphState:
         """识别知识缺口（基于全局上下文）"""
         # 检查是否有全局上下文
@@ -497,12 +552,20 @@ class GapIdentificationAgent:
             prompt = ChatPromptTemplate.from_template(template)
             chain = prompt | self.llm
             
-            response = chain.invoke({
-                "main_topic": state.get("global_outline", {}).get("main_topic", "未知"),
-                "knowledge_flow": state.get("global_outline", {}).get("knowledge_flow", ""),
-                "knowledge_units": knowledge_units_str or "无",
-                "raw_text": state["raw_text"][:800]
-            })
+            print(f"📤 调用LLM进行知识缺口识别...")
+            try:
+                response = chain.invoke({
+                    "main_topic": state.get("global_outline", {}).get("main_topic", "未知"),
+                    "knowledge_flow": state.get("global_outline", {}).get("knowledge_flow", ""),
+                    "knowledge_units": knowledge_units_str or "无",
+                    "raw_text": state["raw_text"][:800]
+                })
+            except Exception as e:
+                print(f"❌ LLM调用失败: {e}")
+                import traceback
+                traceback.print_exc()
+                state["knowledge_gaps"] = []
+                return state
         else:
             # 没有全局上下文时，使用原始prompt
             template = """你是教学助手,识别学生理解这段内容的障碍点。
@@ -526,19 +589,226 @@ class GapIdentificationAgent:
             prompt = ChatPromptTemplate.from_template(template)
             chain = prompt | self.llm
             
-            response = chain.invoke({"raw_text": state["raw_text"][:800]})
+            print(f"📤 调用LLM进行知识缺口识别...")
+            try:
+                response = chain.invoke({"raw_text": state["raw_text"][:800]})
+            except Exception as e:
+                print(f"❌ LLM调用失败: {e}")
+                import traceback
+                traceback.print_exc()
+                state["knowledge_gaps"] = []
+                return state
+        
+        # 检查响应是否有效
+        if not response:
+            print(f"❌ LLM返回空响应对象")
+            state["knowledge_gaps"] = []
+            return state
+        
+        if not hasattr(response, 'content'):
+            print(f"❌ LLM响应对象没有content属性")
+            print(f"   响应对象类型: {type(response)}")
+            print(f"   响应对象: {response}")
+            state["knowledge_gaps"] = []
+            return state
         
         try:
-            gaps_data = json.loads(response.content)
-            knowledge_gaps = [
-                KnowledgeGap(
-                    concept=g.get("concept", ""),
-                    gap_types=[g.get("gap_type", "")],
-                    priority=g.get("priority", 3)
-                ) for g in gaps_data[:5]  # 最多5个
-            ]
-        except:
+            # 尝试解析JSON，支持markdown代码块和截断的JSON
+            response_text = response.content.strip() if response.content else ""
+            original_text = response_text
+            
+            # 打印原始响应用于调试
+            print(f"🔍 原始LLM响应长度: {len(response_text)} 字符")
+            if len(response_text) == 0:
+                print(f"❌ LLM响应为空！")
+                print(f"   原始response.content类型: {type(response.content)}")
+                print(f"   原始response.content值: {repr(response.content)}")
+                state["knowledge_gaps"] = []
+                return state
+            
+            # 移除可能的markdown代码块标记
+            if response_text.startswith("```"):
+                print(f"🔍 检测到markdown代码块，开始提取JSON...")
+                # 使用更简单的方法：直接查找```json和```之间的内容
+                if "```json" in response_text:
+                    start = response_text.find("```json") + 7
+                    end = response_text.find("```", start)
+                    if end > start:
+                        response_text = response_text[start:end].strip()
+                        print(f"✅ 使用简单方法提取JSON，长度: {len(response_text)} 字符")
+                    else:
+                        # 如果没找到结束标记，尝试找到最后一个```
+                        end = response_text.rfind("```")
+                        if end > start:
+                            response_text = response_text[start:end].strip()
+                            print(f"✅ 使用简单方法提取JSON（未找到结束标记），长度: {len(response_text)} 字符")
+                        else:
+                            # 如果还是找不到，使用原始方法
+                            print(f"⚠️  无法找到代码块结束标记，使用原始方法...")
+                            lines = response_text.split("\n")
+                            json_lines = []
+                            in_code_block = False
+                            for i, line in enumerate(lines):
+                                line_stripped = line.strip()
+                                if line_stripped.startswith("```"):
+                                    in_code_block = not in_code_block
+                                    print(f"   第{i+1}行: 代码块标记，in_code_block={in_code_block}")
+                                    continue
+                                if in_code_block:  # 修复：应该在代码块内时添加
+                                    json_lines.append(line)
+                                    if len(json_lines) <= 3:
+                                        print(f"   第{i+1}行: 添加到JSON ({len(line)} 字符)")
+                            response_text = "\n".join(json_lines).strip()
+                elif "```" in response_text:
+                    # 处理普通的```代码块
+                    start = response_text.find("```") + 3
+                    end = response_text.find("```", start)
+                    if end > start:
+                        response_text = response_text[start:end].strip()
+                        print(f"✅ 提取普通代码块内容，长度: {len(response_text)} 字符")
+                    else:
+                        end = response_text.rfind("```")
+                        if end > start:
+                            response_text = response_text[start:end].strip()
+                            print(f"✅ 提取普通代码块内容（未找到结束标记），长度: {len(response_text)} 字符")
+                
+                print(f"🔍 提取后JSON长度: {len(response_text)} 字符")
+                if len(response_text) == 0:
+                    print(f"❌ 提取JSON后为空！")
+                    print(f"   原始响应前500字符: {original_text[:500]}")
+                    # 尝试使用正则表达式直接提取
+                    import re
+                    json_match = re.search(r'\[[\s\S]*?\]', original_text)
+                    if json_match:
+                        response_text = json_match.group(0)
+                        print(f"✅ 使用正则表达式提取JSON数组，长度: {len(response_text)} 字符")
+            
+            print(f"🔍 LLM响应前300字符: {response_text[:300]}")
+            
+            # 尝试直接解析
+            gaps_data = None
+            try:
+                gaps_data = json.loads(response_text)
+                print(f"✅ JSON解析成功")
+            except json.JSONDecodeError as e:
+                # 如果解析失败，尝试修复常见的截断问题
+                print(f"⚠️  JSON解析失败，错误位置: {e.pos}, 错误信息: {e.msg}")
+                
+                # 如果错误位置为0，可能是响应格式不对或为空
+                if e.pos == 0:
+                    print(f"⚠️  错误位置为0，可能是响应格式不对或为空")
+                    print(f"🔍 完整响应内容:\n{response_text}")
+                    
+                    # 尝试使用正则表达式直接提取
+                    gaps_data = self._parse_partial_json(response_text)
+                    if gaps_data:
+                        print(f"✅ 通过正则表达式提取了 {len(gaps_data)} 个对象")
+                    else:
+                        # 如果正则也失败，尝试查找JSON数组
+                        import re
+                        # 尝试找到 [ ... ] 模式
+                        array_match = re.search(r'\[[\s\S]*?\]', response_text)
+                        if array_match:
+                            try:
+                                gaps_data = json.loads(array_match.group(0))
+                                print(f"✅ 从响应中提取JSON数组成功")
+                            except:
+                                gaps_data = []
+                elif e.pos > 0:
+                    # 如果JSON被截断，尝试找到最后一个完整的对象
+                    print(f"⚠️  JSON被截断，尝试修复...")
+                    truncated_text = response_text[:e.pos]
+                    
+                    # 找到最后一个完整的对象
+                    last_brace = truncated_text.rfind('}')
+                    if last_brace > 0:
+                        # 找到这个对象所属的数组
+                        before_brace = truncated_text[:last_brace]
+                        last_bracket = before_brace.rfind('[')
+                        if last_bracket >= 0:
+                            # 尝试提取完整的数组
+                            potential_json = truncated_text[last_bracket:last_brace+1] + ']'
+                            try:
+                                gaps_data = json.loads(potential_json)
+                                print(f"✅ 成功修复截断的JSON，提取了 {len(gaps_data) if isinstance(gaps_data, list) else 1} 个对象")
+                            except:
+                                # 如果还是失败，尝试手动解析
+                                gaps_data = self._parse_partial_json(truncated_text)
+                                if gaps_data:
+                                    print(f"✅ 通过正则表达式从截断文本中提取了 {len(gaps_data)} 个对象")
+                        else:
+                            gaps_data = self._parse_partial_json(truncated_text)
+                            if gaps_data:
+                                print(f"✅ 通过正则表达式从截断文本中提取了 {len(gaps_data)} 个对象")
+                    else:
+                        gaps_data = self._parse_partial_json(truncated_text)
+                        if gaps_data:
+                            print(f"✅ 通过正则表达式从截断文本中提取了 {len(gaps_data)} 个对象")
+                else:
+                    # 其他情况，尝试手动解析
+                    gaps_data = self._parse_partial_json(response_text)
+                    if gaps_data:
+                        print(f"✅ 通过正则表达式提取了 {len(gaps_data)} 个对象")
+            
+            # 如果还是None，设为空列表
+            if gaps_data is None:
+                gaps_data = []
+            
+            # 确保是列表
+            if not isinstance(gaps_data, list):
+                gaps_data = [gaps_data] if gaps_data else []
+            
             knowledge_gaps = []
+            for g in gaps_data[:5]:  # 最多5个
+                if not isinstance(g, dict):
+                    continue
+                    
+                concept = g.get("concept", "").strip()
+                gap_type = g.get("gap_type", "").strip()
+                priority = g.get("priority", 3)
+                
+                # 验证数据有效性
+                if concept and gap_type:
+                    # 确保priority是数字且在1-5范围内
+                    try:
+                        priority = int(priority)
+                        priority = max(1, min(5, priority))
+                    except:
+                        priority = 3
+                    
+                    knowledge_gaps.append(KnowledgeGap(
+                        concept=concept,
+                        gap_types=[gap_type],
+                        priority=priority
+                    ))
+            
+            print(f"✅ 成功识别 {len(knowledge_gaps)} 个知识缺口")
+            if knowledge_gaps:
+                for gap in knowledge_gaps:
+                    print(f"   - {gap.concept} (优先级: {gap.priority}, 类型: {gap.gap_types[0]})")
+        except Exception as e:
+            print(f"⚠️  知识缺口识别JSON解析失败: {e}")
+            print(f"   LLM原始响应前500字符: {response.content[:500]}")
+            # 尝试手动解析
+            try:
+                gaps_data = self._parse_partial_json(response.content)
+                knowledge_gaps = []
+                for g in gaps_data[:5]:
+                    if isinstance(g, dict) and g.get("concept") and g.get("gap_type"):
+                        knowledge_gaps.append(KnowledgeGap(
+                            concept=g["concept"].strip(),
+                            gap_types=[g["gap_type"].strip()],
+                            priority=max(1, min(5, int(g.get("priority", 3))))
+                        ))
+                if knowledge_gaps:
+                    print(f"✅ 通过正则表达式提取了 {len(knowledge_gaps)} 个知识缺口")
+                    for gap in knowledge_gaps:
+                        print(f"   - {gap.concept} (优先级: {gap.priority}, 类型: {gap.gap_types[0]})")
+                else:
+                    print(f"⚠️  正则表达式解析未找到有效数据")
+            except Exception as e2:
+                print(f"⚠️  正则表达式解析也失败: {e2}")
+                knowledge_gaps = []
         
         state["knowledge_gaps"] = knowledge_gaps
         return state
@@ -665,26 +935,58 @@ class RetrievalAgent:
         """执行检索增强"""
         retrieved_docs = []
         
-        # 优化: 只为高优先级缺口检索
-        high_priority_gaps = [g for g in state["knowledge_gaps"] if g.priority >= 4]
-        
-        if not high_priority_gaps:
+        # 获取所有知识缺口（降低阈值，从priority >= 4改为 >= 3）
+        gaps = state.get("knowledge_gaps", [])
+        if not gaps:
+            print("⚠️  没有知识缺口，跳过检索")
             state["retrieved_docs"] = []
             return state
         
+        # 优先处理高优先级缺口（priority >= 4），如果没有则处理所有缺口
+        high_priority_gaps = [g for g in gaps if hasattr(g, 'priority') and g.priority >= 4]
+        gaps_to_search = high_priority_gaps if high_priority_gaps else gaps[:3]  # 最多3个
+        
+        print(f"🔍 为 {len(gaps_to_search)} 个知识缺口检索参考资料")
+        
         # 合并查询,减少检索次数
-        query = " ".join([gap.concept for gap in high_priority_gaps[:2]])
+        query = " ".join([gap.concept if hasattr(gap, 'concept') else gap.get("concept", "") for gap in gaps_to_search[:2]])
+        
+        if not query.strip():
+            print("⚠️  查询为空，跳过检索")
+            state["retrieved_docs"] = []
+            return state
         
         # 1. 优先本地 RAG
-        local_docs = self.retrieve_local(query, k=3)
-        retrieved_docs.extend(local_docs)
+        try:
+            local_docs = self.retrieve_local(query, k=3)
+            retrieved_docs.extend(local_docs)
+            print(f"   📚 本地RAG找到 {len(local_docs)} 条")
+        except Exception as e:
+            print(f"   ⚠️  本地RAG检索失败: {e}")
         
-        # 2. 仅当本地不足且有可用外部源时才检索
-        if len(local_docs) < 2 and any(s["available"] for s in self.sources.values()):
-            external_docs = self.retrieve_external(query)
-            retrieved_docs.extend(external_docs)
+        # 2. 检查外部源可用性
+        available_external = any(s["available"] for s in self.sources.values())
+        print(f"   🌐 外部源可用性: {available_external}")
+        if available_external:
+            for name, config in self.sources.items():
+                if config["available"]:
+                    print(f"      - {name}: ✅")
+                else:
+                    print(f"      - {name}: ❌")
+        
+        # 3. 仅当本地不足且有可用外部源时才检索
+        if len(local_docs) < 2 and available_external:
+            try:
+                external_docs = self.retrieve_external(query)
+                retrieved_docs.extend(external_docs)
+                print(f"   🌐 外部检索找到 {len(external_docs)} 条")
+            except Exception as e:
+                print(f"   ⚠️  外部检索失败: {e}")
+        elif not available_external:
+            print(f"   ⚠️  所有外部源不可用，跳过外部检索")
         
         state["retrieved_docs"] = retrieved_docs[:5]  # 最多5条
+        print(f"✅ 检索完成，共 {len(state['retrieved_docs'])} 条参考资料")
         return state
 
 
@@ -697,6 +999,13 @@ class ConsistencyCheckAgent:
     
     def run(self, state: GraphState) -> GraphState:
         """执行一致性校验"""
+        # 如果没有补充内容，跳过校验
+        expanded_content = state.get("expanded_content", [])
+        if not expanded_content:
+            print("⚠️  没有补充内容，跳过一致性校验")
+            state["check_result"] = CheckResult(status="pass", issues=[], suggestions=[])
+            return state
+        
         # 优化: 明确防幻觉要求
         template = """你是事实核查员,校验补充内容的准确性。
 
@@ -722,23 +1031,40 @@ PPT原文: {raw_text}
         prompt = ChatPromptTemplate.from_template(template)
         chain = prompt | self.llm
         
+        # 处理expanded_content可能是对象或字典
         expanded_text = "\n".join([
-            f"{ec.concept}: {ec.content}" for ec in state["expanded_content"]
+            f"{ec.concept if hasattr(ec, 'concept') else ec.get('concept', '')}: {ec.content if hasattr(ec, 'content') else ec.get('content', '')}" 
+            for ec in expanded_content
         ])
         
+        retrieved_docs = state.get("retrieved_docs", [])
         retrieved_text = "\n".join([
-            f"[参考{i+1}] {doc.page_content[:150]}"
-            for i, doc in enumerate(state["retrieved_docs"][:3])
-        ]) if state["retrieved_docs"] else "无参考资料"
+            f"[参考{i+1}] {doc.page_content[:150] if hasattr(doc, 'page_content') else str(doc)[:150]}"
+            for i, doc in enumerate(retrieved_docs[:3])
+        ]) if retrieved_docs else "无参考资料"
         
         response = chain.invoke({
             "raw_text": state["raw_text"][:600],
-            "expanded_content": expanded_text,
+            "expanded_content": expanded_text or "无补充内容",
             "retrieved_docs": retrieved_text
         })
         
         try:
-            result = json.loads(response.content)
+            # 尝试解析JSON，支持markdown代码块
+            response_text = response.content.strip()
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                json_lines = []
+                in_code_block = False
+                for line in lines:
+                    if line.strip().startswith("```"):
+                        in_code_block = not in_code_block
+                        continue
+                    if not in_code_block:
+                        json_lines.append(line)
+                response_text = "\n".join(json_lines)
+            
+            result = json.loads(response_text)
             check_result = CheckResult(
                 status=result.get("status", "pass"),
                 issues=result.get("issues", []),
