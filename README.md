@@ -50,10 +50,23 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 docker 部署：
+
+前置条件：
+- 已安装 Docker 运行时环境（Windows/Mac 使用 Docker Desktop，Linux 使用 Docker Engine）
+- Docker daemon 进程已启动并运行
+
 ```
-# 构建并启动容器
+# 启动容器
 docker-compose up --build -d
-# 关闭容器
+
+# 访问应用
+# 前端：http://localhost
+# 后端 API：http://localhost:8000/docs
+
+# 查看日志
+docker-compose logs -f backend
+
+# 停止容器
 docker-compose down
 ```
 
