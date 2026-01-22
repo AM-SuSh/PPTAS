@@ -15,7 +15,7 @@ const props = defineProps({
   docId: String
 })
 
-const emit = defineEmits(['select-slide'])
+const emit = defineEmits(['select-slide', 'load-document'])
 
 // Chat 相关
 const chatMessages = ref([])
@@ -1000,6 +1000,7 @@ const formatTime = (timestamp) => {
       <SemanticSearch 
         :current-file-name="slide?.file_name || null"
         @select-slide="emit('select-slide', $event)"
+        @load-document="emit('load-document', $event)"
       />
     </div>
 

@@ -222,6 +222,11 @@ export const pptApi = {
         return service.get(`/vector-store/file/${encodeURIComponent(fileName)}`)
     },
 
+    // 新增方法 - 通过文件名获取文档数据（用于跨文档跳转）
+    getDocumentByName(fileName) {
+        return service.get(`/document/by-name/${encodeURIComponent(fileName)}`)
+    },
+
     // 新增方法 - 删除特定文件的所有切片
     deleteFileSlides(fileName) {
         return service.delete(`/vector-store/file/${encodeURIComponent(fileName)}`)

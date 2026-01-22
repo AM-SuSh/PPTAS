@@ -1411,6 +1411,56 @@ async def get_vector_store_stats(
         )
 
 
+@app.get("/api/v1/document/by-name/{file_name}")
+async def get_document_by_name(
+    file_name: str,
+    persistence: PersistenceService = Depends(get_persistence_service),
+):
+    """通过文件名获取文档数据（用于跨文档跳转）
+    
+    Args:
+        file_name: 文件名
+        persistence: 持久化服务
+    
+    Returns:
+        文档数据，包含 doc_id 和 slides
+    """
+    try:
+        # 从数据库查询
+        import sqlite3
+        conn = sqlite3.connect(persistence.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT doc_id, file_name, file_type, slides_json FROM documents WHERE file_name = ?",
+            (file_name,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            import json
+            doc_id, file_name, file_type, slides_json = row
+            slides = json.loads(slides_json) if slides_json else []
+            
+            return {
+                "success": True,
+                "doc_id": doc_id,
+                "file_name": file_name,
+                "file_type": file_type,
+                "slides": slides
+            }
+        else:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"文件 {file_name} 不存在"}
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
 @app.get("/api/v1/vector-store/file/{file_name}")
 async def get_file_slides(
     file_name: str,

@@ -207,6 +207,9 @@ const selectSlide = async (index) => {
   console.log('📄 加载页面 ' + pageId + '，等待用户决定是否进行 AI 分析')
 }
 
+// 注：跨文档预览功能已在 SemanticSearch 组件内部实现
+// 不再需要 handleLoadDocument 函数
+
 const preloadCachedAnalyses = async () => {
   if (!props.docId) {
     console.warn('⚠️ preloadCachedAnalyses: docId 为空，跳过')

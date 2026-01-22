@@ -13,8 +13,19 @@ const searchResults = ref([])
 const isSearching = ref(false)
 const searchError = ref(null)
 const showResults = ref(false)
+const previewDialog = ref({
+  show: false,
+  result: null,
+  slideData: null,
+  loading: false
+})
 
 const hasResults = computed(() => searchResults.value.length > 0)
+
+// 检查结果是否来自当前文件
+const isCurrentFile = (result) => {
+  return result.metadata?.file_name === props.currentFileName
+}
 
 const performSearch = async () => {
   if (!searchQuery.value.trim()) {
@@ -66,11 +77,61 @@ const formatScore = (score) => {
   return (score * 100).toFixed(1) + '%'
 }
 
-const handleResultClick = (result) => {
-  // 如果结果包含页码信息，可以跳转到对应幻灯片
-  if (result.metadata && result.metadata.page_num) {
-    emit('select-slide', result.metadata.page_num - 1) // 转换为 0-based 索引
+const handleResultClick = async (result) => {
+  // 检查是否来自其他文件
+  if (!isCurrentFile(result)) {
+    // 来自其他PPT，显示该页面的预览
+    const fileName = result.metadata?.file_name
+    const pageNum = result.metadata?.page_num
+    
+    if (fileName) {
+      console.log(`🔍 预览其他文档: ${fileName} 第 ${pageNum} 页`)
+      await showPreview(result)
+    }
+  } else {
+    // 当前文件，直接跳转到对应页面
+    if (result.metadata && result.metadata.page_num) {
+      emit('select-slide', result.metadata.page_num - 1) // 转换为 0-based 索引
+    }
   }
+}
+
+// 显示其他文档页面的预览
+const showPreview = async (result) => {
+  previewDialog.value.show = true
+  previewDialog.value.result = result
+  previewDialog.value.loading = true
+  previewDialog.value.slideData = null
+  
+  try {
+    const fileName = result.metadata?.file_name
+    const pageNum = result.metadata?.page_num
+    
+    // 获取该文档的数据
+    const response = await pptApi.getDocumentByName(fileName)
+    
+    if (response.data.success && response.data.slides) {
+      const slides = response.data.slides
+      // 找到对应的页面
+      const slide = slides.find(s => s.page_num === pageNum)
+      
+      if (slide) {
+        previewDialog.value.slideData = slide
+      } else {
+        console.error('未找到对应页面')
+      }
+    }
+  } catch (error) {
+    console.error('获取文档失败:', error)
+  } finally {
+    previewDialog.value.loading = false
+  }
+}
+
+const closePreview = () => {
+  previewDialog.value.show = false
+  previewDialog.value.result = null
+  previewDialog.value.slideData = null
 }
 </script>
 
@@ -119,8 +180,9 @@ const handleResultClick = (result) => {
       <div class="results-list">
         <div
           v-for="(result, index) in searchResults"
-          :key="index"
+          :key="`${result.metadata?.file_name}_${result.metadata?.page_num}_${index}`"
           class="result-item"
+          :class="{ 'other-file': !isCurrentFile(result) }"
           @click="handleResultClick(result)"
         >
           <div class="result-header">
@@ -128,6 +190,7 @@ const handleResultClick = (result) => {
             <span class="result-meta">
               {{ result.metadata?.file_name || '未知文件' }} - 
               第 {{ result.metadata?.page_num || '?' }} 页
+              <span v-if="!isCurrentFile(result)" class="other-file-badge">其他文件</span>
             </span>
           </div>
           <div class="result-content">
@@ -145,6 +208,70 @@ const handleResultClick = (result) => {
 
     <div v-if="showResults && !hasResults" class="no-results">
       <p>未找到相关结果，请尝试其他关键词</p>
+    </div>
+
+    <!-- 预览弹窗（显示其他文档的页面） -->
+    <div v-if="previewDialog.show" class="preview-dialog-overlay" @click="closePreview">
+      <div class="preview-dialog" @click.stop>
+        <div class="preview-header">
+          <h3>📄 页面预览</h3>
+          <button class="close-btn" @click="closePreview">✕</button>
+        </div>
+        
+        <div class="preview-meta">
+          <div class="meta-item">
+            <span class="meta-label">文件:</span>
+            <span class="meta-value">{{ previewDialog.result?.metadata?.file_name }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">页码:</span>
+            <span class="meta-value">第 {{ previewDialog.result?.metadata?.page_num }} 页</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">标题:</span>
+            <span class="meta-value">{{ previewDialog.result?.metadata?.slide_title }}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">相似度:</span>
+            <span class="meta-value">{{ formatScore(previewDialog.result?.score) }}</span>
+          </div>
+        </div>
+        
+        <div class="preview-body">
+          <div v-if="previewDialog.loading" class="preview-loading">
+            <div class="spinner">加载中...</div>
+          </div>
+          
+          <div v-else-if="previewDialog.slideData" class="preview-content">
+            <!-- 显示页面预览图片 -->
+            <div v-if="previewDialog.slideData.image" class="preview-image">
+              <img 
+                :src="previewDialog.slideData.image" 
+                :alt="`第 ${previewDialog.slideData.page_num} 页`"
+                style="max-width: 100%; height: auto; border-radius: 4px;"
+              />
+            </div>
+            
+            <!-- 显示文本内容 -->
+            <div class="preview-text">
+              <h4>{{ previewDialog.slideData.title }}</h4>
+              <div class="preview-points">
+                <div 
+                  v-for="(point, idx) in previewDialog.slideData.raw_points?.slice(0, 10)" 
+                  :key="idx"
+                  class="point-item"
+                >
+                  {{ typeof point === 'string' ? point : point.text }}
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div v-else class="preview-error">
+            加载失败
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -290,6 +417,27 @@ const handleResultClick = (result) => {
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
+.result-item.other-file {
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
+}
+
+.result-item.other-file:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
+.other-file-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.125rem 0.5rem;
+  background: #fbbf24;
+  color: white;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .result-header {
   display: flex;
   justify-content: space-between;
@@ -353,6 +501,141 @@ const handleResultClick = (result) => {
     align-items: flex-start;
     gap: 0.25rem;
   }
+}
+
+/* 预览弹窗样式 */
+.preview-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.preview-dialog {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 900px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.preview-header h3 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 1.3rem;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.preview-meta {
+  padding: 1rem 1.5rem;
+  background: #f8fafc;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.meta-item {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.meta-label {
+  color: #64748b;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.meta-value {
+  color: #1e293b;
+  font-size: 0.85rem;
+}
+
+.preview-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.preview-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 3rem;
+  color: #64748b;
+}
+
+.preview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.preview-image {
+  text-align: center;
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.preview-text h4 {
+  margin: 0 0 1rem 0;
+  color: #1e293b;
+  font-size: 1.2rem;
+}
+
+.preview-points {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.point-item {
+  padding: 0.5rem 0.75rem;
+  background: #f8fafc;
+  border-left: 3px solid #3b82f6;
+  border-radius: 4px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.preview-error {
+  text-align: center;
+  padding: 3rem;
+  color: #dc2626;
 }
 </style>
 

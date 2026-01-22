@@ -390,9 +390,9 @@ class VectorStoreService:
             
             print(f"   原始结果数: {len(results)}")
             
-            # 处理结果
-            formatted_results = []
-            seen_pages = set()  # 用于去重
+            # 处理结果并去重
+            # 策略：同一页面的多个chunk，只保留相似度最高的那个
+            page_best_results = {}  # {(file_name, page_num): best_result}
             filtered_count = 0
             
             for doc, distance in results:
@@ -413,17 +413,26 @@ class VectorStoreService:
                     metadata.get("page_num", 0)
                 )
                 
-                # 去重：每个页面只保留一次
-                if page_key in seen_pages:
-                    continue
-                
-                seen_pages.add(page_key)
-                formatted_results.append({
-                    "content": doc.page_content,
-                    "metadata": metadata,
-                    "score": similarity,
-                    "distance": distance
-                })
+                # 去重：同一页面的多个chunk，只保留相似度最高的
+                if page_key in page_best_results:
+                    if similarity > page_best_results[page_key]["score"]:
+                        # 找到更相关的chunk，替换
+                        page_best_results[page_key] = {
+                            "content": doc.page_content,
+                            "metadata": metadata,
+                            "score": similarity,
+                            "distance": distance
+                        }
+                else:
+                    page_best_results[page_key] = {
+                        "content": doc.page_content,
+                        "metadata": metadata,
+                        "score": similarity,
+                        "distance": distance
+                    }
+            
+            # 转换为列表
+            formatted_results = list(page_best_results.values())
             
             # 按相似度排序
             formatted_results.sort(key=lambda x: x["score"], reverse=True)
