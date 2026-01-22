@@ -238,11 +238,12 @@ const resetApp = () => {
 
 .upload-main {
   flex: 1;
-  overflow-y: auto;
-  background: #f8fafc;
+  overflow: hidden;
+  background: radial-gradient(circle at top right, #f8fafc, #eff6ff);
   display: flex;
   flex-direction: column;
-  padding: 2rem;
+  padding: 0;
+  min-height: 0;
 }
 
 .workspace-controls {

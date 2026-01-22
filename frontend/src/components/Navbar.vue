@@ -4,7 +4,7 @@ export default {
   props: {
     theme: {
       type: String,
-      default: 'default',
+      default: 'default', // Changed back to default
       validator: value => ['default', 'light', 'dark'].includes(value)
     },
     position: {
@@ -41,7 +41,7 @@ export default {
   },
   methods: {
     handleScroll() {
-      this.isScrolled = window.scrollY > 50
+      this.isScrolled = window.scrollY > 20
     },
     handleResize() {
       clearTimeout(this.resizeTimer)
@@ -68,9 +68,14 @@ export default {
     :class="navbarClasses"
     role="banner"
   >
-    <div class="logo" aria-label="PPTAS Logo">
-      <span class="icon" aria-hidden="true">🧬</span>
-      <span class="text">PPTAS 内容扩展智能体</span>
+    <div class="logo-container" aria-label="PPTAS Logo">
+      <div class="logo-icon">
+        <span class="icon-inner">🧬</span>
+      </div>
+      <div class="logo-text">
+        <span class="brand-name">PPTAS</span>
+        <span class="brand-tagline">AI Content Agent</span>
+      </div>
     </div>
 
     <button
@@ -92,55 +97,82 @@ export default {
 
 <style scoped>
 .navbar {
-  padding: 1rem 5%;
+  padding: 0.75rem 5%;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-  transition: all 0.3s ease;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   width: 100%;
   box-sizing: border-box;
   z-index: 1000;
+  border-bottom: 1px solid transparent;
 }
 
-.logo {
+.logo-container {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-weight: 700;
-  font-size: 1.3rem;
-  letter-spacing: -0.5px;
   cursor: pointer;
-  transition: transform 0.2s;
 }
 
-.logo:hover {
-  transform: scale(1.02);
+.logo-icon {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
-.icon {
-  font-size: 1.8rem;
-  display: inline-block;
-  will-change: transform;
-  animation: pulse 2s infinite;
+.logo-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.brand-name {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.brand-tagline {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .nav-actions {
   display: flex;
   align-items: center;
-  gap: 15px;
-  transition: all 0.3s ease;
+  gap: 1.5rem;
 }
 
+/* Themes */
 .navbar-default {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: #ffffff;
 }
 
+.navbar-default .brand-name { color: #ffffff; }
+.navbar-default .brand-tagline { color: rgba(255, 255, 255, 0.85); }
+.navbar-default .logo-icon { 
+  background: rgba(255, 255, 255, 0.2); 
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+.navbar-default .mobile-menu-btn span { background: #ffffff; }
+
 .navbar-light {
-  background: #ffffff;
-  color: #1a202c;
-  border-bottom: 1px solid #e2e8f0;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  color: #0f172a;
+  border-bottom: 1px solid #f1f5f9;
 }
 
 .navbar-dark {
@@ -148,37 +180,26 @@ export default {
   color: #ffffff;
 }
 
+.navbar-dark .brand-name { color: #ffffff; }
+
 .navbar-sticky {
   position: sticky;
   top: 0;
 }
 
-.navbar-fixed {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-}
-
 .navbar-scrolled {
-  padding: 0.8rem 5%;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-  background: rgba(255, 255, 255, 0.95);
-  color: #1a202c !important;
-  backdrop-filter: blur(10px);
-}
-
-.navbar-dark.navbar-scrolled {
-  background: rgba(26, 32, 44, 0.95);
-  color: #ffffff;
+  padding: 0.5rem 5%;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid #f1f5f9;
 }
 
 .mobile-menu-btn {
   display: none;
   flex-direction: column;
   justify-content: space-around;
-  width: 30px;
-  height: 25px;
+  width: 24px;
+  height: 24px;
   background: transparent;
   border: none;
   cursor: pointer;
@@ -187,68 +208,32 @@ export default {
 }
 
 .mobile-menu-btn span {
-  width: 30px;
-  height: 3px;
-  background: currentColor;
+  width: 24px;
+  height: 2px;
+  background: #0f172a;
   border-radius: 10px;
   transition: all 0.3s ease;
-  transform-origin: 1px;
 }
 
-.mobile-menu-btn span.open:first-child {
-  transform: rotate(45deg);
-}
-.mobile-menu-btn span.open:nth-child(2) {
-  opacity: 0;
-  transform: translateX(20px);
-}
-.mobile-menu-btn span.open:nth-child(3) {
-  transform: rotate(-45deg);
-}
+.mobile-menu-btn span.open:first-child { transform: translateY(8px) rotate(45deg); }
+.mobile-menu-btn span.open:nth-child(2) { opacity: 0; }
+.mobile-menu-btn span.open:nth-child(3) { transform: translateY(-8px) rotate(-45deg); }
 
 @media (max-width: 768px) {
-  .navbar {
-    padding: 0.8rem 5%;
-  }
-
-  .logo {
-    font-size: 1.2rem;
-  }
-
-  .mobile-menu-btn {
-    display: flex;
-  }
-
+  .mobile-menu-btn { display: flex; }
   .nav-actions {
     position: fixed;
     top: 0;
     right: 0;
     height: 100vh;
-    width: 70%;
-    max-width: 300px;
+    width: 280px;
     background: #ffffff;
     flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    box-shadow: -5px 0 15px rgba(0,0,0,0.1);
+    padding: 5rem 2rem;
+    box-shadow: -10px 0 30px rgba(0,0,0,0.1);
     transform: translateX(100%);
-    padding: 2rem;
-    z-index: 1000;
-    color: #1a202c;
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   }
-
-  .nav-actions.active {
-    transform: translateX(0);
-  }
-
-  .navbar-dark .nav-actions {
-    background: #1a202c;
-    color: #ffffff;
-  }
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
+  .nav-actions.active { transform: translateX(0); }
 }
 </style>

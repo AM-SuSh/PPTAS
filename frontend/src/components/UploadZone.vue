@@ -74,485 +74,500 @@ const handleUploadBoxClick = () => {
 
 <template>
   <section class="welcome-area">
-    <div class="hero-section">
-      <div class="hero-text">
-        <h1 class="hero-title">
-          <span class="gradient-text">将枯燥 PPT 转化为</span>
-          <br>
-          <span class="highlight-text">深度复习笔记</span>
-        </h1>
-        <p class="hero-description">
-          AI 驱动的智能解析系统，自动识别 PPT 逻辑层级，
-          <br>
-          联动权威知识库补全公式推导与背景知识
-        </p>
-      </div>
-
-      <div class="feature-grid">
-        <div class="feature-item">
-          <div class="feature-icon">🧠</div>
-          <h3>语义解析</h3>
-          <p>智能识别文档结构，提取关键信息</p>
+    <div class="welcome-layout">
+      <!-- 左侧：品牌与功能介绍 -->
+      <aside class="intro-panel">
+        <div class="brand-badge">AI Powered Study Assistant</div>
+        
+        <div class="hero-text">
+          <h1 class="hero-title">
+            <span class="gradient-text">PPTAS</span>
+            <br>
+            内容扩展智能体
+          </h1>
+          <p class="hero-description">
+            深度重塑您的学习体验。通过 AI 语义解析，将静态幻灯片转化为具备完整逻辑链条、权威引用的深度知识库。
+          </p>
         </div>
 
-        <div class="feature-item">
-          <div class="feature-icon">📚</div>
-          <h3>知识扩充</h3>
-          <p>调用 LLM 补充原理说明与代码示例</p>
+        <div class="feature-vertical-list">
+          <div class="feature-card">
+            <div class="feature-card-icon">🎯</div>
+            <div class="feature-card-content">
+              <h3>语义逻辑重构</h3>
+              <p>超越文字提取，自动识别章节层级与核心论点，构建思维导图。</p>
+            </div>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-card-icon">🌐</div>
+            <div class="feature-card-content">
+              <h3>全网知识联动</h3>
+              <p>实时检索 Wikipedia、Arxiv 及学术期刊，多维权威资源延伸。</p>
+            </div>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-card-icon">✍️</div>
+            <div class="feature-card-content">
+              <h3>智能笔记生成</h3>
+              <p>一键导出结构化 Markdown 笔记，包含层级结构、AI分析、参考资料。</p>
+            </div>
+          </div>
         </div>
 
-        <div class="feature-item">
-          <div class="feature-icon">🔍</div>
-          <h3>多维搜索</h3>
-          <p>联动 Wikipedia、Arxiv 获取权威资料</p>
+        <div class="tech-stack">
+          <span class="tech-tag">DeepSeek-V3</span>
+          <span class="tech-tag">RAG 增强检索</span>
+          <span class="tech-tag">多模态解析</span>
         </div>
-      </div>
-    </div>
+      </aside>
 
-    <div class="upload-area-wrapper">
-      <div class="mode-tabs">
-        <button 
-          class="tab-btn" 
-          :class="{ active: uploadMode === 'file' }"
-          @click="uploadMode = 'file'"
-        >
-          📁 本地上传
-        </button>
-        <button 
-          class="tab-btn" 
-          :class="{ active: uploadMode === 'url' }"
-          @click="uploadMode = 'url'"
-        >
-          🌐 URL 解析
-        </button>
-      </div>
-
-      <!-- 文件上传模式 -->
-      <div
-        v-if="uploadMode === 'file'"
-        class="upload-box dashed-border"
-        :class="{ 'dragging': isDragging, 'processing': isProcessing }"
-        @click="handleUploadBoxClick"
-        @dragover.prevent="isDragging = true"
-        @dragleave.prevent="isDragging = false"
-        @drop.prevent="handleDrop"
-      >
-        <input type="file" ref="fileInput" hidden @change="handleFileChange" accept=".pptx,.pdf" />
-
-        <div class="upload-content">
-          <div class="upload-icon">
-            <div v-if="!isProcessing">📤</div>
-            <div v-else class="mini-spinner"></div>
+      <!-- 右侧：交互上传区 -->
+      <section class="upload-panel">
+        <div class="upload-container-glass">
+          <div class="mode-selector">
+            <button 
+              class="mode-tab" 
+              :class="{ active: uploadMode === 'file' }"
+              @click="uploadMode = 'file'"
+            >
+              本地文件
+            </button>
+            <button 
+              class="mode-tab" 
+              :class="{ active: uploadMode === 'url' }"
+              @click="uploadMode = 'url'"
+            >
+              在线链接
+            </button>
           </div>
 
-          <div v-if="!isProcessing">
-            <p class="upload-text">点击或拖拽 PPT 文件到此处</p>
-            <p class="upload-hint">支持 .pptx 和 .pdf 格式，最大 50MB</p>
-          </div>
-          <div v-else>
-            <p class="upload-text">正在上传文件...</p>
+          <!-- 文件上传 -->
+          <div
+            v-if="uploadMode === 'file'"
+            class="drop-zone"
+            :class="{ 'is-dragging': isDragging, 'is-processing': isProcessing }"
+            @click="handleUploadBoxClick"
+            @dragover.prevent="isDragging = true"
+            @dragleave.prevent="isDragging = false"
+            @drop.prevent="handleDrop"
+          >
+            <input type="file" ref="fileInput" hidden @change="handleFileChange" accept=".pptx,.pdf" />
+            
+            <div class="drop-content">
+              <div class="main-icon">
+                <div v-if="!isProcessing" class="icon-bounce">📂</div>
+                <div v-else class="loader-ring"></div>
+              </div>
+              
+              <div class="text-group" v-if="!isProcessing">
+                <h2 class="drop-title">释放您的 PPT</h2>
+                <p class="drop-subtitle">拖拽文件至此 或 <span class="text-primary">点击浏览</span></p>
+                <div class="file-support">支持 .pptx / .pdf (Max 50MB)</div>
+              </div>
+              
+              <div v-else class="text-group">
+                <h2 class="drop-title">正在上传...</h2>
+                <p class="drop-subtitle">请稍候，正在准备解析环境</p>
+              </div>
+            </div>
+
+            <div class="upload-footer-tags">
+              <span>⚡ 极速解析</span>
+              <span>🔒 隐私加密</span>
+              <span>✨ 智能增强</span>
+            </div>
           </div>
 
-          <div class="upload-features">
-            <div class="feature-tag">✓ AI 自动解析语义层级</div>
-            <div class="feature-tag">✓ 智能检索学术引用</div>
-            <div class="feature-tag">✓ 生成可导出笔记</div>
-          </div>
-        </div>
-      </div>
+          <!-- URL 解析 -->
+          <div v-else class="url-zone drop-zone">
+            <div class="url-content drop-content">
+              <div class="main-icon">
+                <div v-if="!isProcessing">🔗</div>
+                <div v-else class="loader-ring"></div>
+              </div>
+              
+              <div class="text-group" v-if="!isProcessing">
+                <h2 class="drop-title">解析远程文档</h2>
+                <p class="drop-subtitle">输入公开的 PPT/PDF 访问链接</p>
+              </div>
+              <div v-else class="text-group">
+                <h2 class="drop-title">正在准备...</h2>
+                <p class="drop-subtitle">正在连接并准备下载环境</p>
+              </div>
+              
+              <div class="url-input-group" v-if="!isProcessing">
+                <input
+                  v-model="urlInput"
+                  class="modern-input"
+                  type="url"
+                  placeholder="https://example.com/lecture.pptx"
+                  @keyup.enter="submitUrl"
+                />
+                <button class="modern-btn" @click="submitUrl" :disabled="isProcessing">
+                  开始解析
+                </button>
+              </div>
+              <p v-if="urlError" class="error-msg">{{ urlError }}</p>
+              
 
-      <!-- URL 上传模式 -->
-      <div v-else-if="uploadMode === 'url'" class="upload-box dashed-border url-mode-box">
-        <div class="upload-content">
-          <div class="upload-icon">🔗</div>
-          
-          <div v-if="!isProcessing">
-            <p class="upload-text">输入远程 PPT/PDF 链接</p>
-          </div>
-          <div v-else>
-            <div class="mini-spinner center-spinner"></div>
-            <p class="upload-text">正在解析链接...</p>
-          </div>
-          
-          <div class="url-input-wrapper" v-if="!isProcessing">
-            <input
-              v-model="urlInput"
-              class="url-input-large"
-              type="url"
-              placeholder="https://example.com/presentation.pptx"
-              @keyup.enter="submitUrl"
-              @click.stop
-            />
-            <button class="btn-url-large" @click.stop="submitUrl">解析</button>
-          </div>
-          
-          <p class="upload-hint left-align-hint" v-if="!isProcessing">系统将自动下载并提取文档结构与知识点</p>
-          <p v-if="urlError" class="url-error">{{ urlError }}</p>
-
-          <div class="upload-features" v-if="!isProcessing">
-            <div class="feature-tag">✓ 支持 HTTP/HTTPS 协议</div>
-            <div class="feature-tag">✓ 自动识别文件类型</div>
-            <div class="feature-tag">✓ 生成可导出笔记</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="usage-guide">
-      <h3>📖 使用指南</h3>
-      <div class="guide-steps">
-        <div class="step-item">
-          <div class="step-number">1</div>
-          <div class="step-content">
-            <h4>上传 PPT 文件</h4>
-            <p>支持拖拽或点击上传，系统自动解析文档结构</p>
+            </div>
           </div>
         </div>
-        <div class="step-item">
-          <div class="step-number">2</div>
-          <div class="step-content">
-            <h4>AI 智能扩展</h4>
-            <p>自动识别知识点并调用知识库补充内容</p>
-          </div>
+
+        <div class="quick-tips">
+          <span class="tip-icon">💡</span>
+          <p>提示：建议上传结构清晰的 PPT 以获得最佳的语义解析效果。</p>
         </div>
-        <div class="step-item">
-          <div class="step-number">3</div>
-          <div class="step-content">
-            <h4>导出复习笔记</h4>
-            <p>生成包含公式、引用的完整学习资料</p>
-          </div>
-        </div>
-      </div>
+      </section>
     </div>
   </section>
 </template>
 
 <style scoped>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
 .welcome-area {
-  max-width: 1200px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  height: 100%;
+  max-width: 1300px;
   margin: 0 auto;
-  padding: 2rem 1rem;
+  padding: 2rem;
+  color: #1e293b;
+  overflow: hidden;
 }
 
-.hero-section {
-  text-align: center;
-  margin-bottom: 3rem;
+.welcome-layout {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 3rem;
+  height: 100%;
+  align-items: center;
+}
+
+/* 左侧面板 */
+.intro-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.brand-badge {
+  display: inline-flex;
+  padding: 0.5rem 1rem;
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  border-radius: 99px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  width: fit-content;
 }
 
 .hero-title {
-  font-size: 2.5rem;
+  font-size: 3.5rem;
   font-weight: 800;
+  line-height: 1.1;
   margin-bottom: 1.5rem;
-  line-height: 1.3;
+  letter-spacing: -0.02em;
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.highlight-text {
-  color: #1e293b;
-  position: relative;
-}
-
-.highlight-text::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 3px;
-  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
-  border-radius: 2px;
 }
 
 .hero-description {
-  font-size: 1.1rem;
+  font-size: 1.15rem;
+  line-height: 1.6;
   color: #64748b;
-  max-width: 700px;
-  margin: 0 auto 2rem;
-  line-height: 1.8;
+  max-width: 520px;
 }
 
-.feature-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1.5rem;
-  margin-top: 2rem;
-}
-
-.feature-item {
-  background: white;
-  padding: 1.5rem;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-  transition: transform 0.3s, box-shadow 0.3s;
-}
-
-.feature-item:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-}
-
-.feature-icon {
-  font-size: 2rem;
-  margin-bottom: 1rem;
-}
-
-.feature-item h3 {
-  margin: 0 0 0.5rem 0;
-  color: #1e293b;
-  font-size: 1.1rem;
-}
-
-.feature-item p {
-  margin: 0;
-  color: #64748b;
-  font-size: 0.9rem;
-}
-
-.upload-area-wrapper {
-  position: relative;
-  max-width: 1000px;
-  margin: 0 auto;
-}
-
-.mode-tabs {
-  display: flex;
-  justify-content: center;
-  gap: 2rem;
-  margin-bottom: 20px;
-}
-
-.tab-btn {
-  background: transparent;
-  border: none;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #64748b;
-  padding-bottom: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-  border-bottom: 2px solid transparent;
-}
-
-.tab-btn:hover {
-  color: #3b82f6;
-}
-
-.tab-btn.active {
-  color: #3b82f6;
-  border-bottom-color: #3b82f6;
-}
-
-.upload-box {
-  background: white;
-  padding: 60px 60px;
-  border-radius: 20px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); /* 轻微阴影，增加层次感 */
-  min-height: 420px; /* 固定最小高度，保证切换无跳动 */
+.feature-vertical-list {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  align-items: center;
+  gap: 1.25rem;
+  margin-top: 1rem;
 }
 
-.dashed-border {
-  border: 2px dashed #3b82f6; /* 统一样式为蓝色虚线，配合截图 */
-  background-color: #f8fafc; /* 淡背景色 */
-}
-
-.url-mode-box {
-  /* URL模式下特定样式，如果不需额外样式可留空 */
-}
-
-/* Specific restoration for file upload box to be clickable */
-.upload-box:not(.url-mode-box) {
-    cursor: pointer;
-    border-color: #cbd5e0; /* 默认灰色虚线，hover变蓝 */
-    background: white;
-}
-
-.upload-box:not(.url-mode-box):hover {
-  border-color: #3b82f6;
-  background: #f0f7ff;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.15);
-}
-
-.url-input-wrapper {
+.feature-card {
   display: flex;
-  gap: 10px;
-  max-width: 90%; /* 使用相对宽度，占用更多空间 */
-  min-width: 600px; /* 保持最小宽度 */
-  margin: 0 auto 2rem;
-  position: relative;
-  z-index: 5;
+  gap: 1.25rem;
+  padding: 1.25rem;
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid #f1f5f9;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
+  transition: all 0.3s ease;
 }
 
-.url-input-large {
-  flex: 1;
-  padding: 12px 20px;
-  font-size: 1rem;
+.feature-card:hover {
+  transform: translateX(8px);
+  border-color: #e2e8f0;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+}
+
+.feature-card-icon {
+  font-size: 1.75rem;
+  flex-shrink: 0;
+}
+
+.feature-card-content h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+  color: #0f172a;
+}
+
+.feature-card-content p {
+  font-size: 0.95rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.tech-stack {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.tech-tag {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #94a3b8;
+  padding: 0.25rem 0.75rem;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
-  outline: none;
-  transition: border-color 0.2s;
-  background: white;
 }
 
-.url-input-large:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+/* 右侧面板 */
+.upload-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1.5rem;
 }
 
-.btn-url-large {
-  background: #3b82f6;
-  color: white;
+.upload-container-glass {
+  background: #ffffff;
+  border-radius: 24px;
+  border: 1px solid #f1f5f9;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  height: 480px; /* 固定高度，确保两个模式完全一致 */
+}
+
+.mode-selector {
+  display: flex;
+  background: #f1f5f9;
+  padding: 0.4rem;
+  border-radius: 12px;
+  gap: 0.25rem;
+}
+
+.mode-tab {
+  flex: 1;
+  padding: 0.6rem;
   border: none;
-  padding: 0 24px;
-  border-radius: 6px;
+  background: transparent;
+  border-radius: 8px;
   font-weight: 600;
+  color: #64748b;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
 }
 
-.btn-url-large:hover {
-  background: #2563eb;
-  transform: translateY(-1px);
+.mode-tab.active {
+  background: #ffffff;
+  color: #3b82f6;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
 }
 
-.left-align-hint {
-    text-align: center; /* 保持居中更好看，虽然截图似乎是左对齐，但整体居中布局下居中更协调 */
-    margin-bottom: 2rem;
-    margin-top: 0;
-}
-
-.center-spinner {
-    margin: 0 auto 1.5rem;
-    display: flex;
-    justify-content: center;
-}
-
-/* Remove old Tab and URL card styles to clean up */
-/* Keeping spinner and other utilities */
-
-.upload-content {
-  position: relative;
-  z-index: 1;
+.drop-zone {
+  flex: 1;
+  border: 2px dashed #e2e8f0;
+  border-radius: 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  gap: 1.5rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: #f8fafc;
 }
 
-.upload-icon {
-  font-size: 3rem;
-  margin-bottom: 2rem;
+.drop-zone:hover, .drop-zone.is-dragging {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.02);
 }
 
-.mini-spinner {
-  width: 48px;
-  height: 48px;
-  border: 4px solid #e2e8f0;
-  border-top: 4px solid #10b981;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
+.main-icon {
+  font-size: 4rem;
+  margin-bottom: 0.5rem;
 }
 
-.upload-text {
-  font-size: 1.2rem;
-  font-weight: 600;
-  color: #1e293b;
-  margin: 0 0 1.5rem 0;
+.icon-bounce {
+  animation: bounce 2s infinite;
 }
 
-.upload-hint {
-  color: #64748b;
-  font-size: 0.9rem;
-  margin: 0 0 1.5rem 0;
-}
-
-.upload-features {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.2rem;
-  justify-content: center;
-  margin-top: 1.5rem;
-}
-
-.feature-tag {
-  background: #f1f5f9;
-  color: #64748b;
-  padding: 6px 12px;
-  border-radius: 20px;
-  font-size: 0.85rem;
-  font-weight: 500;
-}
-
-.url-error {
-  margin: 0.4rem 0 0 0;
-  color: #ef4444;
-  font-size: 0.9rem;
-  font-weight: 500;
-}
-
-.usage-guide {
-  background: white;
-  padding: 2rem;
-  border-radius: 12px;
-  margin-top: 3rem;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-}
-
-.usage-guide h3 {
-  color: #1e293b;
-  margin-bottom: 1.5rem;
-  font-size: 1.3rem;
-}
-
-.guide-steps {
-  display: flex;
-  gap: 2rem;
-  justify-content: center;
-}
-
-.step-item {
-  flex: 1;
+.text-group {
   text-align: center;
 }
 
-.step-number {
-  width: 40px;
-  height: 40px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  color: white;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.drop-title {
+  font-size: 1.5rem;
   font-weight: 700;
-  margin-bottom: 1rem;
+  color: #0f172a;
+  margin-bottom: 0.5rem;
 }
 
-.step-content h4 {
-  color: #1e293b;
-  margin: 0 0 0.3rem 0;
+.drop-subtitle {
   font-size: 1rem;
+  color: #64748b;
 }
 
-.step-content p {
-  color: #64748b;
-  margin: 0;
-  font-size: 0.9rem;
+.text-primary {
+  color: #3b82f6;
+  font-weight: 600;
+}
+
+.file-support {
+  margin-top: 1rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  background: #ffffff;
+  padding: 0.25rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid #f1f5f9;
+}
+
+.upload-footer-tags {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+
+.upload-footer-tags span {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+/* URL Zone */
+.url-zone {
+  padding: 0; /* 移除额外padding，避免撑高 */
+  cursor: default; /* URL模式不需要点击整个盒子 */
+}
+
+.url-input-group {
+  margin-top: 1.2rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 380px; /* 限制输入框宽度，避免太散 */
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.modern-input {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  font-size: 0.95rem;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.modern-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+}
+
+.modern-btn {
+  width: 100%;
+  padding: 0.8rem;
+  border-radius: 10px;
+  border: none;
+  background: #3b82f6;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modern-btn:hover {
+  background: #2563eb;
+  transform: translateY(-2px);
+}
+
+.modern-btn:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+}
+
+.url-hint-list {
+  margin-top: 1.2rem;
+  text-align: left;
+  display: inline-block;
+}
+
+.url-hint-list p {
+  font-size: 0.85rem;
+  color: #94a3b8;
+  margin-bottom: 0.5rem;
+}
+
+.error-msg {
+  color: #ef4444;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.quick-tips {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: rgba(245, 158, 11, 0.05);
+  border-radius: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.1);
+}
+
+.tip-icon {
+  font-size: 1.25rem;
+}
+
+.quick-tips p {
+  font-size: 0.85rem;
+  color: #b45309;
   line-height: 1.5;
+}
+
+/* Animations */
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.loader-ring {
+  width: 48px;
+  height: 48px;
+  border: 3px solid #f1f5f9;
+  border-top: 3px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
 }
 
 @keyframes spin {
@@ -560,33 +575,33 @@ const handleUploadBoxClick = () => {
   100% { transform: rotate(360deg); }
 }
 
-@media (max-width: 768px) {
-  .hero-title {
-    font-size: 1.8rem;
-  }
-
-  .hero-description {
-    font-size: 1rem;
-  }
-
-  .upload-box {
-    padding: 40px 20px;
-  }
-
-  .feature-grid {
+/* Responsive */
+@media (max-width: 1024px) {
+  .welcome-layout {
     grid-template-columns: 1fr;
+    gap: 2rem;
+    overflow-y: auto;
+  }
+  
+  .welcome-area {
+    overflow-y: auto;
   }
 
-  .guide-steps {
-    flex-direction: column;
+  .hero-title {
+    font-size: 2.5rem;
   }
-
-  .url-input-wrapper {
-      flex-direction: column;
+  
+  .intro-panel {
+    text-align: center;
+    align-items: center;
   }
-
-  .btn-url-large {
-    width: 100%;
+  
+  .hero-description {
+    margin: 0 auto;
+  }
+  
+  .feature-card {
+    text-align: left;
   }
 }
 </style>
