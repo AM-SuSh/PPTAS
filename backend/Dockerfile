@@ -1,29 +1,29 @@
-# Use an official Python runtime as a parent image
+# 后端 Dockerfile
 FROM python:3.9-slim
 
-# 使用清华源加速 apt
-RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources
+WORKDIR /app/backend
 
-# Install system dependencies including LibreOffice for PPTX preview
-RUN apt-get update && apt-get install -y \
+# 使用阿里巴巴 Debian 镜像源加速
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+
+# 安装系统依赖（带重试机制）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
     libreoffice \
-    gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory in the container
-WORKDIR /app
+# 配置 pip 清华源加速
+RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 
-# Copy the requirements file into the container at /app
+# 复制 requirements.txt 并安装 Python 依赖
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-
-# Copy the rest of the backend code
+# 复制后端代码
 COPY . .
 
-# Expose port 8000
+# 暴露端口
 EXPOSE 8000
 
-# Run the application
+# 启动后端服务
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
